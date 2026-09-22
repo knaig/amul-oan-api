@@ -8,6 +8,7 @@ so the service can persist a side-by-side trace.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, AsyncIterator, Optional
 
 from agents.deps import FarmerContext
@@ -19,6 +20,9 @@ from app.planner.models import Plan, StageRecorder, ToolResult
 from app.planner.planner import plan_turn
 
 logger = get_logger(__name__)
+
+
+_TICKET_RE = re.compile(r"Ticket:\s*([A-Z]{1,4}-[A-Z0-9-]{4,})")
 
 
 def history_pairs_from_messages(history: list, limit: int) -> list[tuple[str, str]]:
@@ -89,12 +93,23 @@ async def jev_agent_stream(
     stages.start("compose")
     stages.meta["model_requests"] = 1
     first = True
+    emitted: list[str] = []
     async for chunk in execution.stream(agent, user_message, message_history=history, deps=deps,
                                         new_messages=new_messages, observer=stages):
         if first:
             stages.mark("compose_first_token")
             first = False
+        emitted.append(chunk)
         yield chunk
+    # Safety net: a booking result's ticket must reach the farmer even if the model
+    # paraphrased it away. Appended before translation, so it is localised too.
+    text = "".join(emitted)
+    for r in results:
+        for ticket in _TICKET_RE.findall(r.output or ""):
+            if ticket not in text:
+                stages.meta["ticket_appended"] = ticket
+                yield f"\nYour ticket number is {ticket}."
+                text += ticket
     stages.end("compose")
 
 

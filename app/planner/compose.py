@@ -36,7 +36,9 @@ def results_block(plan: Plan, results: list[ToolResult]) -> str:
         "## Tool results for this turn (already executed by the system)",
         "The routing and tool calls for this message were decided and executed before you were called. "
         "You cannot call tools. Answer the farmer from the results below and the rules above. "
-        "Do not mention tools, planners, or that anything was executed.",
+        "Do not mention tools, planners, or that anything was executed. "
+        "Every identifier a result returns (ticket numbers, reference codes, amounts, dates, market names) "
+        "must appear verbatim in your answer; a booking confirmation without its ticket number is wrong.",
     ]
     if results:
         for i, r in enumerate(results, 1):

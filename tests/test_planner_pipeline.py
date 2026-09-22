@@ -103,6 +103,29 @@ def test_jev_arm_plans_executes_then_composes_once(monkeypatch):
     assert sink["plan"] is plan and stages.meta["planned_tools"][0]["name"] == "search_documents"
 
 
+def test_jev_arm_appends_a_dropped_ticket_number(monkeypatch):
+    record = []
+    plan = Plan(intent="services", tool_calls=[ToolCall("create_health_call", {})])
+
+    async def fake_plan(deps, pairs, settings, original_query=None, gates=None):
+        return plan
+
+    async def fake_execute(plan_, deps, settings, stages=None):
+        return [ToolResult("create_health_call", {}, "Health call booked successfully via the Beckn network. Ticket: HC-260922-AB12C", 900.0)]
+
+    monkeypatch.setattr(arms_mod, "plan_turn", fake_plan)
+    monkeypatch.setattr(arms_mod, "execute", fake_execute)
+    monkeypatch.setattr(arms_mod, "build_compose_agent", lambda deps, plan_, results: SimpleNamespace(name="Amul AI Compose"))
+    stages, sink = StageRecorder(), {}
+
+    async def go():
+        return "".join([c async for c in arms_mod.jev_agent_stream(deps=_deps(), user_message="q", history=[], execution=_fake_execution(record),
+                                                                   new_messages=[], legacy_agent=SimpleNamespace(name="legacy"), settings=PlannerSettings(), stages=stages, sink=sink)])
+
+    out = asyncio.run(go())
+    assert out.endswith("Your ticket number is HC-260922-AB12C.") and stages.meta["ticket_appended"] == "HC-260922-AB12C"
+
+
 def test_jev_arm_escalates_to_legacy_agent_when_plan_says_so(monkeypatch):
     record = []
 
