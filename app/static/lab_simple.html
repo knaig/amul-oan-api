@@ -28,6 +28,9 @@
   .track { position:relative; height:44px; background:#f1f5f9; border-radius:10px; overflow:hidden; }
   .seg { position:absolute; top:0; bottom:0; display:flex; align-items:center; justify-content:center; font-size:12px; color:#0b1020; white-space:nowrap; overflow:hidden; border-right:1px solid rgba(255,255,255,.7); }
   .seg small { opacity:.75; margin-left:4px; }
+  .seg.dim { background:repeating-linear-gradient(45deg,#e5e7eb,#e5e7eb 6px,#f3f4f6 6px,#f3f4f6 12px) !important; color:#9ca3af; }
+  .relevant { display:flex; gap:10px; align-items:baseline; margin:6px 0 0; font-size:14px; }
+  .relevant b { font-size:22px; } .relevant .muted { font-size:13px; }
   .seg.par { top:auto; height:12px; bottom:0; font-size:10px; opacity:.9; }
   .marker { position:absolute; top:-6px; bottom:-6px; width:3px; background:#111827; border-radius:2px; }
   .marker span { position:absolute; top:-20px; left:-4px; font-size:12px; white-space:nowrap; font-weight:600; }
@@ -70,11 +73,13 @@
     <div class="lane a">
       <h3><span><span class="tag">TODAY</span>Language model plans, then writes <span class="muted small">(2 model calls)</span></span><span class="small muted" id="a-total"></span></h3>
       <div class="track" id="track-a"></div>
+      <div class="relevant" id="rel-a"></div>
       <ol class="steps" id="steps-a"></ol>
     </div>
     <div class="lane b">
       <h3><span><span class="tag">NEW</span>Jev plans, language model writes <span class="muted small">(1 model call)</span></span><span class="small muted" id="b-total"></span></h3>
       <div class="track" id="track-b"></div>
+      <div class="relevant" id="rel-b"></div>
       <ol class="steps" id="steps-b"></ol>
     </div>
     <div class="axis"><span>0 s</span><span id="axis-mid"></span><span id="axis-end"></span></div>
@@ -86,6 +91,7 @@
       <span><i style="background:var(--c-data)"></i>fetch data</span>
       <span><i style="background:var(--c-write)"></i>write the answer</span>
       <span><i style="background:#fbbf24"></i>translate answer to Gujarati</span>
+      <span><i style="background:repeating-linear-gradient(45deg,#e5e7eb,#e5e7eb 3px,#f3f4f6 3px,#f3f4f6 6px)"></i>hatched = same in both ways (network / infra), excluded from the saving</span>
       <span>▍ first word reaches the farmer</span>
     </div>
   </div>
@@ -146,28 +152,28 @@ function segments(arm, d){
   const s = d.stages.spans, m = d.stages.marks, tools = d.tools || [];
   const toolMs = tools.length ? Math.max(...tools.map(t => t.ms || 0)) : 0;
   const seq = [
-    {k:'profile', label:'load farmer profile', ms:s.farmer_profile || 0, c:'#cbd5e1'},
-    {k:'translate', label:'translate', ms:s.pretranslation || 0, c:'var(--c-translate)'},
-    {k:'safety', label:'safety check', ms:s.moderation || 0, c:'var(--c-safety)'},
+    {k:'profile', label:'load farmer profile', ms:s.farmer_profile || 0, c:'#cbd5e1', dim:true},
+    {k:'translate', label:'translate question', ms:s.pretranslation || 0, c:'var(--c-translate)', dim:true},
+    {k:'safety', label:'safety check', ms:s.moderation || 0, c:'var(--c-safety)', dim:true},
   ];
   const tr = s.translate_answer || 0;
   if (arm === 'llm') {
     seq.push({k:'plan', label:'model decides data', ms:s.model_request_1 || 0, c:'var(--c-plan)'});
-    if (toolMs) seq.push({k:'data', label:'fetch data', ms:toolMs, c:'var(--c-data)'});
+    if (toolMs) seq.push({k:'data', label:'fetch data', ms:toolMs, c:'var(--c-data)', dim:true});
     let n = 2; while (s['model_request_'+n]) { seq.push({k:'write', label: n === 2 ? 'model writes answer' : 'model call #'+n, ms:s['model_request_'+n], c:'var(--c-write)'}); n++; }
     if (n === 2) seq.push({k:'write', label:'model writes answer', ms:Math.max(0, d.stages.total_ms - seq.reduce((a,x)=>a+x.ms,0)), c:'var(--c-write)'});
   } else {
     seq.push({k:'plan', label:'Jev wait', ms:s.plan || 0, c:'var(--c-plan)'});
-    if (toolMs) seq.push({k:'data', label:'fetch data', ms:toolMs, c:'var(--c-data)'});
+    if (toolMs) seq.push({k:'data', label:'fetch data', ms:toolMs, c:'var(--c-data)', dim:true});
     seq.push({k:'write', label:'model writes answer', ms:s.compose || s.model_request_1 || 0, c:'var(--c-write)'});
   }
   // The write bar contains the Gujarati translation of each answer batch; split it out.
-  const w = seq.filter(x => x.k === 'write'); if (tr && w.length) { const lastW = w[w.length-1]; lastW.ms = Math.max(0, lastW.ms - tr); seq.push({k:'trans_out', label:'translate answer to Gujarati', ms:tr, c:'#fbbf24'}); }
+  const w = seq.filter(x => x.k === 'write'); if (tr && w.length) { const lastW = w[w.length-1]; lastW.ms = Math.max(0, lastW.ms - tr); seq.push({k:'trans_out', label:'translate answer to Gujarati', ms:tr, c:'#fbbf24', dim:true}); }
   return seq;
 }
 function drawTrack(id, seq, scale, firstWord, extra){
   const el = $(id); let x = 0; el.innerHTML = '';
-  for (const g of seq) { if (!g.ms) continue; const w = g.ms / scale * 100; el.insertAdjacentHTML('beforeend', `<div class="seg" style="left:${x}%;width:${w}%;background:${g.c}" title="${g.label}: ${fmt(g.ms)}">${w > 9 ? g.label : ''}${w > 14 ? `<small>${fmt(g.ms)}</small>` : ''}</div>`); x += w; }
+  for (const g of seq) { if (!g.ms) continue; const w = g.ms / scale * 100; el.insertAdjacentHTML('beforeend', `<div class="seg ${g.dim ? 'dim' : ''}" style="left:${x}%;width:${w}%;background:${g.c}" title="${g.label}: ${fmt(g.ms)}${g.dim ? ' (same work both ways: network / infrastructure)' : ''}">${w > 9 ? g.label : ''}${w > 14 ? `<small>${fmt(g.ms)}</small>` : ''}</div>`); x += w; }
   if (extra) el.insertAdjacentHTML('beforeend', extra);
   if (firstWord != null) el.insertAdjacentHTML('beforeend', `<div class="marker" style="left:${firstWord/scale*100}%"><span>first word ${fmt(firstWord)}</span></div>`);
 }
@@ -181,7 +187,11 @@ function render(){
   const par = jev ? `<div class="seg par" style="left:${pre/scale*100}%;width:${Math.min(jev,mod||jev)/scale*100}%;background:var(--c-plan)" title="Jev decides what to fetch: ${fmt(jev)} (in parallel with the safety check)">Jev decides · ${fmt(jev)}</div>` : '';
   drawTrack('track-b', segB, scale, B.stages.marks.first_client_token, par);
   $('axis-mid').textContent = fmt(scale/2); $('axis-end').textContent = fmt(scale);
-  $('a-total').textContent = 'whole answer in ' + fmt(A.stages.total_ms); $('b-total').textContent = 'whole answer in ' + fmt(B.stages.total_ms);
+  $('a-total').textContent = 'whole answer in ' + fmt(A.stages.total_ms) + ' (wall clock, laptop)'; $('b-total').textContent = 'whole answer in ' + fmt(B.stages.total_ms) + ' (wall clock, laptop)';
+  const relA = A.stages.meta.relevant_ms, relB = B.stages.meta.relevant_ms;
+  const decideA = A.stages.spans.model_request_1 || 0, decideB = B.stages.spans.plan || 0;
+  $('rel-a').innerHTML = `<span style="color:var(--a)"><b>${fmt(relA)}</b></span><span>relevant time = decide ${fmt(decideA)} + write to first word ${fmt(Math.max(0, relA - decideA))}</span><span class="muted">· greyed bars are identical work in both ways</span>`;
+  $('rel-b').innerHTML = `<span style="color:var(--b)"><b>${fmt(relB)}</b></span><span>relevant time = decide ${fmt(decideB)} (Jev, in parallel) + write to first word ${fmt(Math.max(0, relB - decideB))}</span>`;
   const toolsTxt = d => (d.tools||[]).length ? [...new Set(d.tools.map(t => t.name.replace(/_/g,' ')))].join(', ') : 'nothing to fetch';
   const plannedB = (B.stages.meta.planned_tools||[]).map(t => t.name.replace(/_/g,' ')); 
   $('steps-a').innerHTML = [
@@ -198,7 +208,7 @@ function render(){
     `Asked the model <b>once</b> to write the answer; first word after <b>${fmt(B.stages.marks.first_client_token - B.stages.marks.agent_start)}</b>`,
   ].filter(Boolean).map(x => `<li>${x}</li>`).join('');
   // savings
-  const ttA = A.stages.marks.first_client_token - A.stages.marks.agent_start, ttB = B.stages.marks.first_client_token - B.stages.marks.agent_start;
+  const ttA = A.stages.meta.relevant_ms, ttB = B.stages.meta.relevant_ms;
   const dt = ttA - ttB;
   const tokA = A.stages.meta.gen_input_tokens_est || 0, tokB = (B.stages.meta.gen_input_tokens_est || 0), jevTok = B.stages.meta.jev_input_tokens || 0;
   const model = (A.stages.meta.agent_model||'').split(':').pop(); const [pin, pout] = PRICE[model] || [null,null];
@@ -206,13 +216,13 @@ function render(){
   const costB = pin != null ? (tokB*pin + (B.stages.meta.gen_output_tokens_est||0)*pout + jevTok*JEV)/1e6 : null;
   const pct = (a,b) => a ? Math.round((a-b)/a*100) : null;
   const cards = [
-    {v: (dt >= 0 ? '−' : '+') + fmt(Math.abs(dt)), t: dt >= 0 ? 'sooner to the first word' : 'later to the first word (this run)', good: dt >= 0},
+    {v: (dt >= 0 ? '−' : '+') + fmt(Math.abs(dt)), t: dt >= 0 ? `relevant time (${fmt(ttA)} → ${fmt(ttB)}): decide + write to first word` : `relevant time (${fmt(ttA)} → ${fmt(ttB)}) — slower this run (model latency varies)`, good: dt >= 0},
     {v: `${A.stages.meta.model_requests || 2} → 1`, t: 'language-model calls', good: (A.stages.meta.model_requests||2) > 1},
     {v: tokA ? `−${pct(tokA, tokB)}%` : '—', t: `tokens to the language model (${(tokA/1000).toFixed(1)}k → ${(tokB/1000).toFixed(1)}k, plus ${(jevTok/1000).toFixed(1)}k cheap Jev tokens)`, good: tokA > tokB},
     {v: costA != null ? `−${pct(costA, costB)}%` : '—', t: costA != null ? `cost per question ($${costA.toFixed(4)} → $${costB.toFixed(4)}, ${model})` : 'cost (unknown model price)', good: costA != null && costA > costB},
   ];
   $('savings').innerHTML = cards.map(c => `<div class="save ${c.good ? '' : 'neutral'}"><b>${c.v}</b><span>${c.t}</span></div>`).join('');
-  $('savings-note').textContent = 'Translate and safety-check steps are identical in both ways and are not part of the saving. "First word" is measured from the end of the safety check, so tool and network time count equally for both.';
+  $('savings-note').textContent = 'Relevant time = deciding what to fetch + the model writing until the first word. Greyed bars (profile, translate both ways, safety check, fetching data) are the same work in both ways and depend on where the servers are, so they are excluded from the saving.';
   const same = JSON.stringify([...new Set((A.tools||[]).map(t=>t.name))].sort()) === JSON.stringify([...new Set((B.tools||[]).map(t=>t.name))].sort());
   $('agree').textContent = same ? 'Both ways fetched the same data.' : `Different data fetched — today: ${toolsTxt(A)} · new: ${toolsTxt(B)}. Read both answers and judge which is more complete.`;
   agg.push({dt, calls:A.stages.meta.model_requests||2, tokA, tokB:tokB+jevTok, costA, costB});

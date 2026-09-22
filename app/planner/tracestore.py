@@ -40,6 +40,7 @@ class TurnRow(Base):
     plan_json = Column(Text)         # jev answers + notes (jev/shadow only)
     stages_json = Column(Text)       # StageRecorder snapshot
     ttft_ms = Column(Float)          # first token to client (after moderation etc.)
+    relevant_ms = Column(Float)      # ttft minus data-fetch time: decide + write-to-first-word
     total_ms = Column(Float)
     jev_ms = Column(Float)
     jev_input_tokens = Column(Integer)
@@ -179,6 +180,8 @@ async def stats() -> dict[str, Any]:
             "turns": len(sub),
             "errors": sum(1 for r in rows if r.arm == arm and r.error),
             "ttft_p50": _pct(ttft, 50), "ttft_p95": _pct(ttft, 95),
+            "relevant_p50": _pct([r.relevant_ms for r in sub if r.relevant_ms is not None], 50),
+            "relevant_p95": _pct([r.relevant_ms for r in sub if r.relevant_ms is not None], 95),
             "total_p50": _pct(total, 50), "total_p95": _pct(total, 95),
             "escalated": sum(1 for r in sub if r.escalated),
             "jev_ms_p50": _pct([r.jev_ms for r in sub if r.jev_ms], 50),

@@ -1057,6 +1057,10 @@ async def stream_chat_messages(
                 )
                 _marks = stages.marks
                 _ttft = (_marks.get("first_client_token", 0) - _marks.get("agent_start", 0)) if "first_client_token" in _marks else None
+                _tool_ms = max([t.get("ms") or 0 for t in (turn_sink["tools"] or [])] or [0])
+                _relevant = (_ttft - _tool_ms) if _ttft is not None else None
+                stages.meta["relevant_ms"] = round(_relevant, 1) if _relevant is not None else None
+                turn_sink["stages"] = stages.snapshot()
                 _plan = turn_sink.get("plan")
                 if turn_sink.get("persist", True) and (arm == "jev" or compare_group or shadow_enabled):
                     turn_sink["trace_id"] = await _planner_trace.record(
@@ -1065,7 +1069,7 @@ async def stream_chat_messages(
                         tools_json=turn_sink["tools"],
                         plan_json={"answers": getattr(_plan, "answers", None), "notes": getattr(_plan, "compose_notes", None), "confidence": getattr(_plan, "confidence", None)} if _plan else None,
                         stages_json=turn_sink["stages"],
-                        ttft_ms=_ttft, total_ms=stages.elapsed_ms(),
+                        ttft_ms=_ttft, relevant_ms=_relevant, total_ms=stages.elapsed_ms(),
                         jev_ms=getattr(_plan, "jev_ms", None), jev_input_tokens=getattr(_plan, "jev_input_tokens", None),
                         model_requests=stages.meta.get("model_requests"),
                         escalated=int(bool(stages.meta.get("escalated"))),

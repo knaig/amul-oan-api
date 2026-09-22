@@ -171,7 +171,7 @@ async function loadConfig(){
   $('sample').innerHTML = '<option value="">— pick a sample —</option>' + (c.samples||[]).map((s,i) => `<option value="${i}">${(s.expected_tools||[]).join('+') || 'no tool'} · ${s.query_en || s.query}</option>`).join('');
   $('sample').onchange = () => { const s = (c.samples||[])[$('sample').value]; if (s) { $('query').value = s.query; $('source_lang').value = 'gu'; $('target_lang').value = 'gu'; if (s.mobile) $('mobile').value = s.mobile; } };
   $('model_profile').innerHTML = (c.profiles||[]).map(p => `<option value="${p.name}">${p.name} · ${p.agent_model||''}${p.weight?' (default)':''}</option>`).join('');
-  for (const [k,v] of Object.entries(c.defaults)) { const el = $(k); if (el && el.type !== 'checkbox' && typeof v !== 'object') el.value = v; }
+  for (const [k,v] of Object.entries(c.defaults)) { const el = $(k); if (!el) continue; if (el.type === 'checkbox') { if (k === 'concurrent_moderation') el.checked = !!v; } else if (typeof v !== 'object') el.value = v; }
   $('dry_run').checked = true;
 }
 function overrides(){
@@ -338,7 +338,9 @@ async function loadHistory(){
     const row = (label, a, b, delta, note) => `<tr><td>${label}${note?` <span class="muted small">${note}</span>`:''}</td><td style="color:var(--llm)"><b>${a ?? '—'}</b></td><td style="color:var(--jev)"><b>${b ?? '—'}</b></td><td>${delta ?? ''}</td></tr>`;
     $('stats').innerHTML = `<tr><th>metric</th><th style="color:var(--llm)">Flow A · LLM two-call</th><th style="color:var(--jev)">Flow B · Jev + LLM one-call</th><th>B − A</th></tr>`
       + row('turns recorded', A.turns, B.turns, '')
-      + row('agent-step TTFT p50 (ms)', A.ttft_p50, B.ttft_p50, d(A.ttft_p50, B.ttft_p50), 'agent start → first token')
+      + row('planner-relevant time p50 (ms)', A.relevant_p50, B.relevant_p50, d(A.relevant_p50, B.relevant_p50), 'decide + write to first word; data fetch excluded')
+      + row('planner-relevant time p95 (ms)', A.relevant_p95, B.relevant_p95, d(A.relevant_p95, B.relevant_p95))
+      + row('agent-step TTFT p50 (ms)', A.ttft_p50, B.ttft_p50, d(A.ttft_p50, B.ttft_p50), 'agent start → first token, incl. data fetch')
       + row('agent-step TTFT p95 (ms)', A.ttft_p95, B.ttft_p95, d(A.ttft_p95, B.ttft_p95))
       + row('total turn p50 (ms)', A.total_p50, B.total_p50, d(A.total_p50, B.total_p50), 'incl. pretranslation, moderation, translation')
       + row('total turn p95 (ms)', A.total_p95, B.total_p95, d(A.total_p95, B.total_p95), 'tail = milk-records round trips, no-card 20 s wait, Flow A tool loops')
