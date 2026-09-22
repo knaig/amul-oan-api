@@ -193,6 +193,13 @@ async def lab_page():
     return FileResponse(str(_STATIC), media_type="text/html")
 
 
+@router.get("/simple")
+async def lab_simple_page():
+    """Plain-language view: one question, two timelines, the saving highlighted."""
+    _guard()
+    return FileResponse(str(_STATIC.with_name("lab_simple.html")), media_type="text/html")
+
+
 @router.get("/config")
 async def lab_config():
     _guard()

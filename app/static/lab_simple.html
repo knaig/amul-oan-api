@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One Question, Two Ways</title>
+<style>
+  :root { --bg:#f7f7f5; --ink:#1b1f24; --muted:#6b7280; --line:#e5e7eb; --a:#2563eb; --b:#059669; --bad:#b91c1c;
+          --c-translate:#94a3b8; --c-safety:#a78bfa; --c-plan:#f59e0b; --c-data:#38bdf8; --c-write:#34d399; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:16px/1.5 -apple-system, Segoe UI, Roboto, sans-serif; color:var(--ink); background:var(--bg); }
+  .tabs { display:flex; gap:6px; padding:12px 24px 0; }
+  .tabs a { padding:8px 14px; border-radius:8px 8px 0 0; text-decoration:none; color:var(--muted); background:#ececea; font-size:14px; }
+  .tabs a.on { background:#fff; color:var(--ink); font-weight:600; }
+  main { max-width:1100px; margin:0 auto; padding:16px 24px 48px; }
+  h1 { font-size:26px; margin:8px 0 4px; } .sub { color:var(--muted); margin:0 0 20px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:14px; padding:18px 20px; margin-bottom:16px; }
+  .ask { display:grid; grid-template-columns:1fr auto; gap:10px; align-items:end; }
+  label { display:block; font-size:13px; color:var(--muted); margin-bottom:4px; }
+  select { width:100%; font:inherit; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:#fff; }
+  .btn { font:inherit; font-weight:600; padding:11px 20px; border-radius:10px; border:0; background:#111827; color:#fff; cursor:pointer; }
+  .btn.secondary { background:#fff; color:var(--ink); border:1px solid var(--line); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .lane { margin:14px 0 6px; }
+  .lane h3 { margin:0 0 6px; font-size:16px; display:flex; justify-content:space-between; align-items:baseline; }
+  .lane h3 .tag { font-size:12px; font-weight:600; padding:2px 8px; border-radius:999px; color:#fff; margin-right:8px; }
+  .lane.a h3 .tag { background:var(--a); } .lane.b h3 .tag { background:var(--b); }
+  .track { position:relative; height:44px; background:#f1f5f9; border-radius:10px; overflow:hidden; }
+  .seg { position:absolute; top:0; bottom:0; display:flex; align-items:center; justify-content:center; font-size:12px; color:#0b1020; white-space:nowrap; overflow:hidden; border-right:1px solid rgba(255,255,255,.7); }
+  .seg small { opacity:.75; margin-left:4px; }
+  .seg.par { top:auto; height:12px; bottom:0; font-size:10px; opacity:.9; }
+  .marker { position:absolute; top:-6px; bottom:-6px; width:3px; background:#111827; border-radius:2px; }
+  .marker span { position:absolute; top:-20px; left:-4px; font-size:12px; white-space:nowrap; font-weight:600; }
+  .axis { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-top:4px; }
+  .steps { margin:8px 0 0; padding-left:20px; font-size:14px; color:#374151; }
+  .steps li { margin:2px 0; } .steps b { color:var(--ink); }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--muted); margin-top:10px; }
+  .legend i { display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:-2px; margin-right:4px; }
+  .savings { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+  .save { background:linear-gradient(180deg,#ecfdf5,#fff); border:1px solid #a7f3d0; border-radius:14px; padding:16px; text-align:center; }
+  .save b { display:block; font-size:34px; color:var(--b); line-height:1.1; } .save span { font-size:13px; color:#065f46; }
+  .save.neutral { background:#fff; border-color:var(--line); } .save.neutral b { color:var(--ink); } .save.neutral span { color:var(--muted); }
+  .answers { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .answer { border:1px solid var(--line); border-radius:12px; padding:12px 14px; white-space:pre-wrap; font-size:15px; min-height:80px; }
+  .answer h4 { margin:0 0 6px; font-size:13px; color:var(--muted); font-weight:600; }
+  .status { font-size:13px; color:var(--muted); min-height:20px; }
+  .muted { color:var(--muted); } .small { font-size:13px; }
+  .toggle { font-size:13px; } .toggle button { font:inherit; border:1px solid var(--line); background:#fff; padding:3px 10px; border-radius:999px; cursor:pointer; margin-left:6px; }
+  .toggle button.on { background:#111827; color:#fff; border-color:#111827; }
+  @media (max-width:800px) { .savings { grid-template-columns:1fr 1fr; } .answers { grid-template-columns:1fr; } .ask { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div class="tabs"><a class="on" href="./simple">Simple view</a><a href="./">Advanced dashboard</a></div>
+<main>
+  <h1>One farmer question, two ways</h1>
+  <p class="sub">Today the assistant asks the language model twice: once to decide what data to fetch, once to write the answer. The new way asks <b>Jev</b> (a small, fast decision model) what to fetch, and the language model only writes. Same question, same data sources, same answer model. Watch the two timelines fill.</p>
+
+  <div class="card">
+    <div class="ask">
+      <div><label>Pick a farmer question</label><select id="q"></select></div>
+      <div style="display:flex; gap:8px"><button class="btn" id="ask">Ask both ways</button><button class="btn secondary" id="all">Run all</button></div>
+    </div>
+    <div class="status" id="status" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card">
+    <div class="lane a">
+      <h3><span><span class="tag">TODAY</span>Language model plans, then writes <span class="muted small">(2 model calls)</span></span><span class="small muted" id="a-total"></span></h3>
+      <div class="track" id="track-a"></div>
+      <ol class="steps" id="steps-a"></ol>
+    </div>
+    <div class="lane b">
+      <h3><span><span class="tag">NEW</span>Jev plans, language model writes <span class="muted small">(1 model call)</span></span><span class="small muted" id="b-total"></span></h3>
+      <div class="track" id="track-b"></div>
+      <ol class="steps" id="steps-b"></ol>
+    </div>
+    <div class="axis"><span>0 s</span><span id="axis-mid"></span><span id="axis-end"></span></div>
+    <div class="legend">
+      <span><i style="background:var(--c-translate)"></i>translate question to English</span>
+      <span><i style="background:var(--c-safety)"></i>safety check</span>
+      <span><i style="background:var(--c-plan)"></i>decide what data to fetch</span>
+      <span><i style="background:var(--c-data)"></i>fetch data</span>
+      <span><i style="background:var(--c-write)"></i>write the answer</span>
+      <span>▍ first word reaches the farmer</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 12px; font-size:16px">What the new way saves on this question</h3>
+    <div class="savings" id="savings">
+      <div class="save neutral"><b>—</b><span>first word sooner</span></div>
+      <div class="save neutral"><b>—</b><span>model calls</span></div>
+      <div class="save neutral"><b>—</b><span>tokens sent to the language model</span></div>
+      <div class="save neutral"><b>—</b><span>cost per question</span></div>
+    </div>
+    <p class="small muted" id="savings-note" style="margin:10px 0 0"></p>
+  </div>
+
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
+      <h3 style="margin:0; font-size:16px">The answers</h3>
+      <div class="toggle">Show: <button class="on" data-lang="gu">Gujarati (as the farmer sees it)</button><button data-lang="en">English source</button></div>
+    </div>
+    <div class="answers">
+      <div class="answer"><h4 style="color:var(--a)">TODAY · 2 model calls</h4><div id="ans-a"></div></div>
+      <div class="answer"><h4 style="color:var(--b)">NEW · Jev + 1 model call</h4><div id="ans-b"></div></div>
+    </div>
+    <p class="small muted" id="agree" style="margin:10px 0 0"></p>
+  </div>
+
+  <div class="card" id="runall" style="display:none">
+    <h3 style="margin:0 0 8px; font-size:16px">Across all questions run in this session</h3>
+    <div class="savings" id="agg"></div>
+  </div>
+</main>
+<script>
+const API = location.pathname.replace(/\/lab\/simple\/?$/, '');
+const $ = id => document.getElementById(id);
+const PRICE = {"gpt-4.1":[2,8], "gpt-4.1-mini":[0.4,1.6], "gemini-2.5-flash":[0.3,2.5]}; const JEV = 0.042;
+const QUESTIONS = [
+  {q:'મારી ભેંસ પડી ગઈ છે ડોક્ટર મોકલો', en:'My buffalo has collapsed, send a doctor'},
+  {q:'મારું બોનસ કેટલું છે?', en:'How much is my bonus?'},
+  {q:'આજે જુનાગઢ માં ડુંગળી નો ભાવ શું છે', en:"Today's onion price in Junagadh"},
+  {q:'મારી ગાય ને તાવ છે અને ખાતી નથી', en:'My cow has fever and is not eating'},
+  {q:'મારો સોઇલ હેલ્થ કાર્ડ બતાવો 2024-25', en:'Show my soil health card 2024-25'},
+  {q:'કિસાન ક્રેડિટ કાર્ડ વિશે માહિતી આપો', en:'Tell me about Kisan Credit Card'},
+];
+$('q').innerHTML = QUESTIONS.map((x,i) => `<option value="${i}">${x.en}  ·  ${x.q}</option>`).join('');
+let lang = 'gu'; const last = {}; const agg = [];
+document.querySelectorAll('.toggle button').forEach(b => b.onclick = () => { document.querySelectorAll('.toggle button').forEach(x => x.classList.remove('on')); b.classList.add('on'); lang = b.dataset.lang; renderAnswers(); });
+
+function fmt(ms){ return ms == null ? '—' : (ms >= 1000 ? (ms/1000).toFixed(1) + ' s' : Math.round(ms) + ' ms'); }
+function renderAnswers(){
+  for (const [k, d] of Object.entries(last)) {
+    const el = $(k === 'llm' ? 'ans-a' : 'ans-b'); if (!d) continue;
+    el.textContent = lang === 'gu' ? (d.answer || '') : ((d.answer_en || d.answer) || '');
+  }
+}
+// Build the sequence of segments for a flow from its stage spans.
+function segments(arm, d){
+  const s = d.stages.spans, m = d.stages.marks, tools = d.tools || [];
+  const toolMs = tools.length ? Math.max(...tools.map(t => t.ms || 0)) : 0;
+  const seq = [
+    {k:'translate', label:'translate', ms:s.pretranslation || 0, c:'var(--c-translate)'},
+    {k:'safety', label:'safety check', ms:s.moderation || 0, c:'var(--c-safety)'},
+  ];
+  if (arm === 'llm') {
+    seq.push({k:'plan', label:'model decides data', ms:s.model_request_1 || 0, c:'var(--c-plan)'});
+    if (toolMs) seq.push({k:'data', label:'fetch data', ms:toolMs, c:'var(--c-data)'});
+    let n = 2; while (s['model_request_'+n]) { seq.push({k:'write', label: n === 2 ? 'model writes answer' : 'model call #'+n, ms:s['model_request_'+n], c:'var(--c-write)'}); n++; }
+    if (n === 2) seq.push({k:'write', label:'model writes answer', ms:Math.max(0, d.stages.total_ms - seq.reduce((a,x)=>a+x.ms,0)), c:'var(--c-write)'});
+  } else {
+    seq.push({k:'plan', label:'Jev wait', ms:s.plan || 0, c:'var(--c-plan)'});
+    if (toolMs) seq.push({k:'data', label:'fetch data', ms:toolMs, c:'var(--c-data)'});
+    seq.push({k:'write', label:'model writes answer', ms:s.compose || s.model_request_1 || 0, c:'var(--c-write)'});
+  }
+  return seq;
+}
+function drawTrack(id, seq, scale, firstWord, extra){
+  const el = $(id); let x = 0; el.innerHTML = '';
+  for (const g of seq) { if (!g.ms) continue; const w = g.ms / scale * 100; el.insertAdjacentHTML('beforeend', `<div class="seg" style="left:${x}%;width:${w}%;background:${g.c}" title="${g.label}: ${fmt(g.ms)}">${w > 9 ? g.label : ''}${w > 14 ? `<small>${fmt(g.ms)}</small>` : ''}</div>`); x += w; }
+  if (extra) el.insertAdjacentHTML('beforeend', extra);
+  if (firstWord != null) el.insertAdjacentHTML('beforeend', `<div class="marker" style="left:${firstWord/scale*100}%"><span>first word ${fmt(firstWord)}</span></div>`);
+}
+function render(){
+  const A = last.llm, B = last.jev; if (!A || !B || !A.stages || !B.stages) return;
+  const scale = Math.max(A.stages.total_ms, B.stages.total_ms) * 1.05;
+  const segA = segments('llm', A), segB = segments('jev', B);
+  drawTrack('track-a', segA, scale, A.stages.marks.first_client_token);
+  // Jev's own call runs in parallel with the safety check: show it as a thin bar under that segment.
+  const mod = B.stages.spans.moderation || 0, pre = B.stages.spans.pretranslation || 0, jev = B.stages.meta.jev_ms || 0;
+  const par = jev ? `<div class="seg par" style="left:${pre/scale*100}%;width:${Math.min(jev,mod||jev)/scale*100}%;background:var(--c-plan)" title="Jev decides what to fetch: ${fmt(jev)} (in parallel with the safety check)">Jev decides · ${fmt(jev)}</div>` : '';
+  drawTrack('track-b', segB, scale, B.stages.marks.first_client_token, par);
+  $('axis-mid').textContent = fmt(scale/2); $('axis-end').textContent = fmt(scale);
+  $('a-total').textContent = 'whole answer in ' + fmt(A.stages.total_ms); $('b-total').textContent = 'whole answer in ' + fmt(B.stages.total_ms);
+  const toolsTxt = d => (d.tools||[]).length ? [...new Set(d.tools.map(t => t.name.replace(/_/g,' ')))].join(', ') : 'nothing to fetch';
+  const plannedB = (B.stages.meta.planned_tools||[]).map(t => t.name.replace(/_/g,' ')); 
+  $('steps-a').innerHTML = [
+    `Translated the question to English <b>${fmt(A.stages.spans.pretranslation)}</b>`,
+    `Checked it is a farming question <b>${fmt(A.stages.spans.moderation)}</b>`,
+    `Asked <b>${(A.stages.meta.agent_model||'the model')}</b> what data to fetch <b>${fmt(A.stages.spans.model_request_1)}</b> → ${toolsTxt(A)}`,
+    (A.tools||[]).length ? `Fetched it <b>${fmt(Math.max(...A.tools.map(t=>t.ms||0)))}</b>` : null,
+    `Asked the model again to write the answer; first word after <b>${fmt(A.stages.marks.first_client_token - A.stages.marks.agent_start)}</b> of thinking${A.stages.meta.model_requests > 2 ? ` <span style="color:var(--bad)">(it looped: ${A.stages.meta.model_requests} model calls)</span>` : ''}`,
+  ].filter(Boolean).map(x => `<li>${x}</li>`).join('');
+  $('steps-b').innerHTML = [
+    `Translated the question to English <b>${fmt(B.stages.spans.pretranslation)}</b>`,
+    `Checked it is a farming question <b>${fmt(B.stages.spans.moderation)}</b> — and <b>at the same time</b> Jev decided what to fetch in <b>${fmt(B.stages.meta.jev_ms)}</b> → ${plannedB.length ? plannedB.join(', ') : 'nothing to fetch'}${B.stages.meta.escalated ? ' <span style="color:var(--bad)">(Jev unsure → handed to the old way)</span>' : ''}`,
+    (B.tools||[]).length ? `Fetched it <b>${fmt(Math.max(...B.tools.map(t=>t.ms||0)))}</b>` : null,
+    `Asked the model <b>once</b> to write the answer; first word after <b>${fmt(B.stages.marks.first_client_token - B.stages.marks.agent_start)}</b>`,
+  ].filter(Boolean).map(x => `<li>${x}</li>`).join('');
+  // savings
+  const ttA = A.stages.marks.first_client_token - A.stages.marks.agent_start, ttB = B.stages.marks.first_client_token - B.stages.marks.agent_start;
+  const dt = ttA - ttB;
+  const tokA = A.stages.meta.gen_input_tokens_est || 0, tokB = (B.stages.meta.gen_input_tokens_est || 0), jevTok = B.stages.meta.jev_input_tokens || 0;
+  const model = (A.stages.meta.agent_model||'').split(':').pop(); const [pin, pout] = PRICE[model] || [null,null];
+  const costA = pin != null ? (tokA*pin + (A.stages.meta.gen_output_tokens_est||0)*pout)/1e6 : null;
+  const costB = pin != null ? (tokB*pin + (B.stages.meta.gen_output_tokens_est||0)*pout + jevTok*JEV)/1e6 : null;
+  const pct = (a,b) => a ? Math.round((a-b)/a*100) : null;
+  const cards = [
+    {v: (dt >= 0 ? '−' : '+') + fmt(Math.abs(dt)), t: dt >= 0 ? 'sooner to the first word' : 'later to the first word (this run)', good: dt >= 0},
+    {v: `${A.stages.meta.model_requests || 2} → 1`, t: 'language-model calls', good: (A.stages.meta.model_requests||2) > 1},
+    {v: tokA ? `−${pct(tokA, tokB)}%` : '—', t: `tokens to the language model (${(tokA/1000).toFixed(1)}k → ${(tokB/1000).toFixed(1)}k, plus ${(jevTok/1000).toFixed(1)}k cheap Jev tokens)`, good: tokA > tokB},
+    {v: costA != null ? `−${pct(costA, costB)}%` : '—', t: costA != null ? `cost per question ($${costA.toFixed(4)} → $${costB.toFixed(4)}, ${model})` : 'cost (unknown model price)', good: costA != null && costA > costB},
+  ];
+  $('savings').innerHTML = cards.map(c => `<div class="save ${c.good ? '' : 'neutral'}"><b>${c.v}</b><span>${c.t}</span></div>`).join('');
+  $('savings-note').textContent = 'Translate and safety-check steps are identical in both ways and are not part of the saving. "First word" is measured from the end of the safety check, so tool and network time count equally for both.';
+  const same = JSON.stringify([...new Set((A.tools||[]).map(t=>t.name))].sort()) === JSON.stringify([...new Set((B.tools||[]).map(t=>t.name))].sort());
+  $('agree').textContent = same ? 'Both ways fetched the same data.' : `Different data fetched — today: ${toolsTxt(A)} · new: ${toolsTxt(B)}. Read both answers and judge which is more complete.`;
+  agg.push({dt, calls:A.stages.meta.model_requests||2, tokA, tokB:tokB+jevTok, costA, costB});
+  if (agg.length > 1) {
+    $('runall').style.display = '';
+    const med = xs => { const s=[...xs].sort((a,b)=>a-b); return s[Math.floor(s.length/2)]; };
+    const sumA = agg.reduce((a,x)=>a+(x.costA||0),0), sumB = agg.reduce((a,x)=>a+(x.costB||0),0);
+    $('agg').innerHTML = [
+      {v:'−'+fmt(med(agg.map(x=>x.dt))), t:`median time saved to first word (${agg.length} questions)`},
+      {v:`${(agg.reduce((a,x)=>a+x.calls,0)/agg.length).toFixed(1)} → 1`, t:'average model calls per question'},
+      {v:`−${Math.round((1 - agg.reduce((a,x)=>a+x.tokB,0)/agg.reduce((a,x)=>a+x.tokA,0))*100)}%`, t:'tokens (incl. Jev)'},
+      {v: sumA ? `−${Math.round((1-sumB/sumA)*100)}%` : '—', t:`cost ($${sumA.toFixed(3)} → $${sumB.toFixed(3)} total)`},
+    ].map(c => `<div class="save"><b>${c.v}</b><span>${c.t}</span></div>`).join('');
+  }
+}
+async function ask(idx, session){
+  const item = QUESTIONS[idx]; delete last.llm; delete last.jev;
+  $('ans-a').textContent = ''; $('ans-b').textContent = ''; $('agree').textContent = '';
+  ['track-a','track-b'].forEach(id => $(id).innerHTML = '<div class="seg" style="left:0;width:100%;background:#e2e8f0;color:var(--muted)">working…</div>');
+  $('steps-a').innerHTML = ''; $('steps-b').innerHTML = '';
+  $('status').textContent = `Asking: “${item.en}” — both ways run at the same time…`;
+  $('ask').disabled = true; $('all').disabled = true;
+  const t0 = performance.now(); const firstWord = {};
+  const r = await fetch(API + '/lab/turn', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({query:item.q, arms:['llm','jev'], session_id: session || ('simple-' + Math.random().toString(36).slice(2,8)), source_lang:'gu', target_lang:'gu', mobile:'9876543210', dry_run_side_effects:true})});
+  const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
+  while (true) { const {value, done} = await reader.read(); if (done) break; buf += dec.decode(value, {stream:true});
+    let i; while ((i = buf.indexOf('\n\n')) >= 0) { const raw = buf.slice(0, i); buf = buf.slice(i+2); const line = raw.split('\n').find(l => l.startsWith('data: ')); if (!line) continue; const e = JSON.parse(line.slice(6));
+      const el = e.arm === 'llm' ? 'ans-a' : 'ans-b';
+      if (e.type === 'token') { if (!firstWord[e.arm]) { firstWord[e.arm] = true; $('status').textContent = `${e.arm === 'llm' ? 'TODAY' : 'NEW'} way produced its first word at ${fmt(performance.now()-t0)} wall-clock…`; } $(el).textContent += e.text; }
+      if (e.type === 'done') { last[e.arm] = e; $(el).textContent = e.answer; }
+      if (e.type === 'error') { $(el).textContent = 'Error: ' + e.error; }
+    } }
+  $('ask').disabled = false; $('all').disabled = false; $('status').textContent = 'Done. Hover any bar for its exact time.';
+  render(); renderAnswers();
+}
+$('ask').onclick = () => ask(Number($('q').value));
+$('all').onclick = async () => { for (let i = 0; i < QUESTIONS.length; i++) { $('q').value = i; await ask(i); await new Promise(r => setTimeout(r, 2500)); } };
+</script>
+</body>
+</html>
