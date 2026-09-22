@@ -159,6 +159,13 @@ def test_milk_records_last_month_resolve_to_full_previous_month():
     assert args["fromdate"].endswith("-01") and args["todate"] > args["fromdate"]
 
 
+def test_strict_format_tools_get_an_explicit_compose_note():
+    plan, _ = plan_for("what is my bonus", base_answers(intent=choice("profile"), primary_tool=choice("get_farmer_bonus_amount")))
+    assert any("### Bonus Amount" in n for n in plan.compose_notes)
+    plan, _ = plan_for("show my milk", base_answers(intent=choice("profile"), primary_tool=choice("get_farmer_milk_collection_details"), milk_period=choice("last_7_days")))
+    assert any("### Milk Collection" in n for n in plan.compose_notes)
+
+
 def test_milk_records_hidden_when_not_signed_in():
     plan, _ = plan_for("show my milk records", base_answers(
         intent=choice("profile"), primary_tool=choice("get_farmer_milk_collection_details")), signed_in=False)

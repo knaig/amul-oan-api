@@ -329,6 +329,13 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
 
     if clarification:
         notes.append(clarification)
+    # Tools whose output has a mandated shape: say so again next to the results, so the
+    # single compose call cannot drift into prose (the legacy loop saw the tool call it
+    # made itself; here it only sees the result block).
+    if any(c.name == "get_farmer_bonus_amount" for c in calls):
+        notes.append("get_farmer_bonus_amount was used: output ONLY the '### Bonus Amount' markdown table with columns `Period | Society | Farmer | Bonus Amount`, exactly as the 'Farmer Bonus Amount Output (strict format)' rules say. No prose before or after.")
+    if any(c.name == "get_farmer_milk_collection_details" for c in calls):
+        notes.append("get_farmer_milk_collection_details was used: output ONLY the two markdown tables '### Milk Collection' and '### Deductions' in that order with the exact columns from the 'Farmer Milk Collection Output (strict format)' rules. No prose.")
 
     used = [c for c in a.used if c > 0]
     plan_conf = min(used) if used else primary_conf
