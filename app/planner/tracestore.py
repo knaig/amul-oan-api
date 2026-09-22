@@ -32,7 +32,9 @@ class TurnRow(Base):
     source_lang = Column(String(16))
     target_lang = Column(String(16))
     query = Column(Text)
+    query_en = Column(Text)          # the pipeline's own pre-translation (what the planner saw)
     answer = Column(Text)
+    answer_en = Column(Text)         # English source answer before post-translation
     intent = Column(String(40))
     tools_json = Column(Text)        # [{name,args,ms,ok,dry_run}]
     plan_json = Column(Text)         # jev answers + notes (jev/shadow only)
@@ -62,6 +64,14 @@ async def _ensure() -> Optional[async_sessionmaker]:
         _engine = create_async_engine(trace_db_url(), pool_pre_ping=True)
         async with _engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # Additive migration for existing SQLite/Postgres files: add missing columns.
+            def _add_missing(sync_conn):
+                from sqlalchemy import inspect as _inspect
+                existing = {c["name"] for c in _inspect(sync_conn).get_columns("planner_turns")}
+                for col in TurnRow.__table__.columns:
+                    if col.name not in existing:
+                        sync_conn.execute(text(f"ALTER TABLE planner_turns ADD COLUMN {col.name} TEXT"))
+            await conn.run_sync(_add_missing)
         _sessions = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
         _ready = True
         return _sessions

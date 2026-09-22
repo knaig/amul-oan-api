@@ -61,6 +61,8 @@
   <aside>
     <div class="card">
       <h2>Trigger</h2>
+      <label>Sample question (labelled by the tool it needs; fills the box)</label>
+      <select id="sample"><option value="">— pick a sample —</option></select>
       <label>Message (farmer's words, any supported language)</label>
       <textarea id="query" placeholder="મારી ગાય ને તાવ છે અને ખાતી નથી"></textarea>
       <div class="row">
@@ -124,6 +126,7 @@
         <h3><span><span class="pill" style="background:#dbeafe;color:#1e3a8a">Flow A</span> LLM two-call (plan request + compose request)</span> <span class="badge" id="status-llm">idle</span></h3>
         <div class="kpis" id="kpi-llm"></div>
         <div class="answer" id="answer-llm"></div>
+        <details class="small" style="margin-top:4px"><summary>English source (what the model wrote before translation) · English query the planner saw</summary><div class="answer" id="answer-en-llm"></div></details>
         <div class="wf" id="wf-llm"></div>
         <table id="tools-llm"></table>
         <div class="rate" id="rate-llm"></div>
@@ -132,6 +135,7 @@
         <h3><span><span class="pill" style="background:#d1fae5;color:#065f46">Flow B</span> Jev plan + LLM compose (one model request)</span> <span class="badge" id="status-jev">idle</span></h3>
         <div class="kpis" id="kpi-jev"></div>
         <div class="answer" id="answer-jev"></div>
+        <details class="small" style="margin-top:4px"><summary>English source (what the model wrote before translation) · English query the planner saw</summary><div class="answer" id="answer-en-jev"></div></details>
         <div class="wf" id="wf-jev"></div>
         <table id="tools-jev"></table>
         <div class="rate" id="rate-jev"></div>
@@ -140,7 +144,7 @@
     </div>
     <div class="card" style="margin-top:16px">
       <h2>Recent turns <button class="btn secondary" id="refresh" style="float:right; padding:3px 8px; font-size:12px">Refresh</button></h2>
-      <table id="history"><thead><tr><th>Time</th><th>Flow</th><th>Query</th><th>Intent</th><th>Tools</th><th>TTFT ms</th><th>Total ms</th><th>Jev ms</th><th>Req</th><th>Esc</th><th>Rating</th></tr></thead><tbody></tbody></table>
+      <table id="history"><thead><tr><th>Time</th><th>Flow</th><th>Query (original · English)</th><th>Intent</th><th>Tools</th><th>TTFT ms</th><th>Total ms</th><th>Jev ms</th><th>Req</th><th>Esc</th><th>Rating</th></tr></thead><tbody></tbody></table>
     </div>
   </section>
 </main>
@@ -157,6 +161,8 @@ async function loadConfig(){
   const r = await fetch(API + '/lab/config'); const c = await r.json();
   $('checks').innerHTML = Object.entries(c.checks).map(([k,v]) => `<span class="badge ${v?'ok':'no'}">${k}</span>`).join('');
   $('tools').innerHTML = c.tools.map(t => `<label title="${t.description}"><input type="checkbox" data-tool="${t.name}" checked> ${t.name}</label>`).join('');
+  $('sample').innerHTML = '<option value="">— pick a sample —</option>' + (c.samples||[]).map((s,i) => `<option value="${i}">${(s.expected_tools||[]).join('+') || 'no tool'} · ${s.query_en || s.query}</option>`).join('');
+  $('sample').onchange = () => { const s = (c.samples||[])[$('sample').value]; if (s) { $('query').value = s.query; $('source_lang').value = 'gu'; $('target_lang').value = 'gu'; } };
   $('model_profile').innerHTML = (c.profiles||[]).map(p => `<option value="${p.name}">${p.name} · ${p.agent_model||''}${p.weight?' (default)':''}</option>`).join('');
   for (const [k,v] of Object.entries(c.defaults)) { const el = $(k); if (el && el.type !== 'checkbox' && typeof v !== 'object') el.value = v; }
   $('dry_run').checked = true;
@@ -178,7 +184,7 @@ function body(extra){
   }, extra || {});
 }
 function resetArm(a){
-  $('answer-'+a).textContent = ''; $('kpi-'+a).innerHTML = ''; $('wf-'+a).innerHTML = ''; $('tools-'+a).innerHTML = ''; $('rate-'+a).innerHTML = '';
+  $('answer-'+a).textContent = ''; $('answer-en-'+a).textContent = ''; $('kpi-'+a).innerHTML = ''; $('wf-'+a).innerHTML = ''; $('tools-'+a).innerHTML = ''; $('rate-'+a).innerHTML = '';
   $('status-'+a).textContent = 'waiting'; $('status-'+a).className = 'badge';
   if (a==='jev') $('plan-jev').textContent = '—';
 }
@@ -245,7 +251,7 @@ function handle(ev, done){
   if (ev.type==='start') { $('status-'+a).textContent = 'running · history ' + ev.history_turns + ' turns'; }
   if (ev.type==='token') { $('answer-'+a).textContent += ev.text; if (!$('status-'+a).dataset.first) { $('status-'+a).dataset.first='1'; $('status-'+a).textContent = 'first token @ ' + ev.t_ms.toFixed(0) + ' ms'; } }
   if (ev.type==='plan') { $('plan-jev').textContent = JSON.stringify({intent: ev.intent, confidence: ev.confidence, escalate: ev.escalate, escalate_reason: ev.escalate_reason, jev_ms: ev.jev_ms, jev_input_tokens: ev.jev_input_tokens, model: ev.jev_model, tools: ev.tools, notes: ev.notes, answers: ev.answers}, null, 2); }
-  if (ev.type==='done') { done[a] = ev; $('status-'+a).textContent = 'done'; $('status-'+a).className = 'badge ok'; delete $('status-'+a).dataset.first; kpis(a, ev); waterfall(a, ev); toolsTable(a, ev.tools); rating(a, ev.trace_id); agreement(done); }
+  if (ev.type==='done') { done[a] = ev; $('answer-en-'+a).textContent = (ev.query_en ? 'Q (en): ' + ev.query_en + '\n\n' : '') + (ev.answer_en || '(answer was already English)'); $('status-'+a).textContent = 'done'; $('status-'+a).className = 'badge ok'; delete $('status-'+a).dataset.first; kpis(a, ev); waterfall(a, ev); toolsTable(a, ev.tools); rating(a, ev.trace_id); agreement(done); }
   if (ev.type==='error') { $('status-'+a).textContent = 'error'; $('status-'+a).className = 'badge no'; $('answer-'+a).innerHTML = `<span class="err">${ev.error}</span>`; }
   if (ev.type==='audio') { const audio = new Audio('data:audio/wav;base64,' + ev.audio_base64); const btn = document.createElement('button'); btn.className='btn secondary'; btn.textContent = `▶ Play ${a} answer (TTS ${ev.tts_ms} ms)`; btn.onclick = () => audio.play(); $('rate-'+a).appendChild(btn); }
   if (ev.type==='end') { loadHistory(); }
@@ -293,7 +299,7 @@ async function loadHistory(){
       + `<tr><td colspan="4" class="small muted" style="padding-top:8px">Tool-plan agreement (same message, both flows): <b>${ag.same_tools}</b> same · ${ag.subset} subset · ${ag.different} different of ${ag.pairs} pairs. Shadow mode (Flow B planned silently behind a Flow A production turn): ${ag.shadow_same}/${ag.shadow_turns} same.</td></tr>`;
   }
   const flow = a => a==='llm' ? '<span class="pill" style="background:#dbeafe;color:#1e3a8a">A · LLM×2</span>' : a==='jev' ? '<span class="pill" style="background:#d1fae5;color:#065f46">B · Jev+LLM</span>' : `<span class="pill">${a}</span>`;
-  $('history').querySelector('tbody').innerHTML = tr.map(r => `<tr><td class="small muted">${(r.ts||'').slice(5,19).replace('T',' ')}</td><td>${flow(r.arm)}</td><td title="${(r.answer||'').replace(/"/g,'&quot;')}">${(r.query||'').slice(0,60)}</td><td>${r.intent||''}</td><td>${(r.tools_json||[]).map(t=>t.name).join(', ')}</td><td>${r.ttft_ms!=null?Math.round(r.ttft_ms):''}</td><td>${r.total_ms!=null?Math.round(r.total_ms):''}</td><td>${r.jev_ms!=null?Math.round(r.jev_ms):''}</td><td>${r.model_requests??''}</td><td>${r.escalated?'yes':''}</td><td>${r.rating||''}${r.agreement?` <span class="pill">${r.agreement}</span>`:''}</td></tr>`).join('');
+  $('history').querySelector('tbody').innerHTML = tr.map(r => `<tr><td class="small muted">${(r.ts||'').slice(5,19).replace('T',' ')}</td><td>${flow(r.arm)}</td><td title="${((r.answer_en||'') ? 'EN: ' + r.answer_en + '\n\n' : '') + (r.answer||'').replace(/"/g,'&quot;')}">${(r.query||'').slice(0,50)}${r.query_en && r.query_en!==r.query ? `<br><span class="muted">${r.query_en.slice(0,60)}</span>` : ''}</td><td>${r.intent||''}</td><td>${(r.tools_json||[]).map(t=>t.name).join(', ')}</td><td>${r.ttft_ms!=null?Math.round(r.ttft_ms):''}</td><td>${r.total_ms!=null?Math.round(r.total_ms):''}</td><td>${r.jev_ms!=null?Math.round(r.jev_ms):''}</td><td>${r.model_requests??''}</td><td>${r.escalated?'yes':''}</td><td>${r.rating||''}${r.agreement?` <span class="pill">${r.agreement}</span>`:''}</td></tr>`).join('');
 }
 $('refresh').onclick = loadHistory;
 loadConfig().then(loadHistory);

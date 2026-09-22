@@ -559,6 +559,7 @@ async def stream_chat_messages(
             if needs_output_translation:
                 # Agent responds in English; response will be translated to target_lang downstream
                 processing_lang = "en"
+            turn_sink["query_en"] = processing_query
 
             # Normalized caller phone — the micro-loan tool reads this from deps so it
             # never has to trust an LLM-supplied number. None for anonymous sessions.
@@ -786,7 +787,15 @@ async def stream_chat_messages(
                 # disconnect-safe first-token-commit primitives are reused verbatim.
                 new_messages: list = []
 
+                english_source_chunks: list[str] = []
+
+                async def _tap_english(src):
+                    async for _c in src:
+                        english_source_chunks.append(_c)
+                        yield _c
+
                 async def _stream_to_client(english_src):
+                    english_src = _tap_english(english_src)
                     if needs_output_translation:
                         sentence_buffer = ""
                         translation_batch = []
@@ -969,6 +978,7 @@ async def stream_chat_messages(
             try:
                 final_text = "".join(translated_output_chunks) if needs_output_translation and translated_output_chunks else "".join(raw_output_chunks)
                 turn_sink["answer"] = final_text
+                turn_sink["answer_en"] = "".join(english_source_chunks)
                 turn_sink["stages"] = stages.snapshot()
                 if arm == "llm":
                     turn_sink["tools"] = stages.tools or legacy_tool_calls(new_messages)
@@ -983,7 +993,7 @@ async def stream_chat_messages(
                 _plan = turn_sink.get("plan")
                 if turn_sink.get("persist", True) and (arm == "jev" or compare_group or shadow_enabled):
                     turn_sink["trace_id"] = await _planner_trace.record(
-                        **_base, arm=arm, answer=final_text,
+                        **_base, arm=arm, answer=final_text, query_en=turn_sink.get("query_en"), answer_en=turn_sink.get("answer_en"),
                         intent=getattr(_plan, "intent", None),
                         tools_json=turn_sink["tools"],
                         plan_json={"answers": getattr(_plan, "answers", None), "notes": getattr(_plan, "compose_notes", None), "confidence": getattr(_plan, "confidence", None)} if _plan else None,

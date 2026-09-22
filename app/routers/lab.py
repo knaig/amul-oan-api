@@ -131,7 +131,7 @@ async def _run_arm(arm: str, req: TurnRequest, base_session: str, group: str, qu
             except Exception as exc:  # pragma: no cover - best effort
                 logger.debug("lab background task failed: %s", exc)
         await queue.put({
-            "arm": arm, "type": "done", "answer": sink.get("answer", ""), "stages": stages.snapshot(),
+            "arm": arm, "type": "done", "answer": sink.get("answer", ""), "answer_en": sink.get("answer_en", ""), "query_en": sink.get("query_en", ""), "stages": stages.snapshot(),
             "tools": sink.get("tools", []), "trace_id": sink.get("trace_id"), "session_id": session_id,
         })
     except Exception as exc:
@@ -224,11 +224,20 @@ async def lab_config():
             profiles.append({"name": p.name, "weight": p.weight, "agent_model": f"{plan.tiers[0].provider.value}:{plan.tiers[0].model}" if plan else None})
     except Exception as exc:  # pragma: no cover
         logger.debug("lab config profiles unavailable: %s", exc)
+    samples = []
+    try:
+        import json as _json
+        for line in (settings.base_dir / "scripts" / "planner_eval_sample.jsonl").read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                samples.append(_json.loads(line))
+    except Exception as exc:  # pragma: no cover
+        logger.debug("lab samples unavailable: %s", exc)
     return {
         "defaults": defaults,
         "tools": [{"name": t, "description": TOOL_DESCRIPTIONS[t]} for t in ALL_TOOLS],
         "checks": checks,
         "profiles": profiles,
+        "samples": samples,
         "environment": settings.environment,
         "api_prefix": settings.api_prefix,
     }
