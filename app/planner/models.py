@@ -35,6 +35,9 @@ class Plan:
     jev_input_tokens: int = 0
     jev_model: str = ""
     jev_request_id: Optional[str] = None
+    moderation_category: Optional[str] = None   # when Jev did the safety check
+    moderation_action: Optional[str] = None
+    moderation_confidence: Optional[float] = None
 
     def tool_names(self) -> list[str]:
         return [c.name for c in self.tool_calls]

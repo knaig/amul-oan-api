@@ -219,6 +219,17 @@ def test_personal_data_question_does_not_also_search():
     assert plan.tool_names() == ["get_farmer_bonus_amount"]
 
 
+def test_jev_moderation_verdict_and_canned_action():
+    blocked, _ = plan_for("who won the cricket match", base_answers(intent=choice("out_of_scope"), primary_tool=choice("none_answer_directly"), moderation=choice("invalid_non_agricultural", 0.9)))
+    assert blocked.moderation_category == "invalid_non_agricultural" and "farming" in blocked.moderation_action
+    unsure, _ = plan_for("pd balance?", base_answers(moderation=choice("invalid_non_agricultural", 0.4)))
+    assert unsure.moderation_category == "valid_agricultural"  # prompt rule 4: when unsure, valid
+    ok, _ = plan_for("my cow has fever", base_answers(moderation=choice("valid_agricultural", 0.98)))
+    assert ok.moderation_category == "valid_agricultural" and ok.moderation_action == "Proceed with the query."
+    none, _ = plan_for("x", base_answers())
+    assert none.moderation_category is None
+
+
 def test_out_of_scope_and_greeting_need_no_tools():
     for intent in ("out_of_scope", "greeting_smalltalk", "language_switch"):
         plan, _ = plan_for("hello", base_answers(intent=choice(intent), primary_tool=choice("none_answer_directly")))

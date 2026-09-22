@@ -120,7 +120,7 @@ def test_jev_arm_escalates_to_legacy_agent_when_plan_says_so(monkeypatch):
     assert record == [("stream", "legacy")] and stages.meta["escalated"] is True
 
 
-def _drive_chat(monkeypatch, *, planner, compose_chunks=("Give clean water daily.",), overrides=None, moderation_category="valid_agricultural"):
+def _drive_chat(monkeypatch, *, planner, compose_chunks=("Give clean water daily.",), overrides=None, moderation_category="valid_agricultural", plan_factory=None):
     seen = []
     monkeypatch.setattr(chat_service, "propagate_attributes", None)
     monkeypatch.setattr(chat_service, "get_langfuse_client", None)
@@ -145,6 +145,8 @@ def _drive_chat(monkeypatch, *, planner, compose_chunks=("Give clean water daily
 
     async def _fake_plan(deps, pairs, settings, original_query=None, gates=None):
         seen.append("jev_plan")
+        if plan_factory:
+            return plan_factory()
         return Plan(intent="nutrition", tool_calls=[ToolCall("search_documents", {"query": "cow water", "top_k": 8})], jev_ms=90.0)
 
     async def _fake_execute(plan, deps, settings, stages=None):
@@ -219,6 +221,27 @@ def test_concurrent_moderation_rejection_emits_only_the_decline(monkeypatch):
     out, seen, stages, sink = _drive_chat(monkeypatch, planner="llm", overrides={"concurrent_moderation": True}, moderation_category="invalid_non_agricultural")
     assert out == "I only answer farming questions."
     assert "legacy answer" not in out and "first_client_token" not in stages.marks
+
+
+def test_jev_moderation_skips_the_llm_check_when_allowed(monkeypatch):
+    mk = lambda: Plan(intent="nutrition", tool_calls=[ToolCall("search_documents", {"query": "cow water", "top_k": 8})], moderation_category="valid_agricultural", moderation_action="Proceed with the query.", moderation_confidence=0.97)
+    out, seen, stages, sink = _drive_chat(monkeypatch, planner="jev", overrides={"moderation_source": "jev"}, plan_factory=mk)
+    assert out == "Give clean water daily."
+    assert "moderation" not in [s for s in seen if isinstance(s, str)]  # no LLM safety call
+    assert stages.meta["moderation_source"] == "jev" and "moderation" not in stages.spans
+
+
+def test_jev_moderation_blocks_with_canned_line(monkeypatch):
+    mk = lambda: Plan(intent="out_of_scope", tool_calls=[], moderation_category="invalid_non_agricultural", moderation_action="I can only help with farming, dairy and livestock questions.", moderation_confidence=0.95)
+    out, seen, stages, sink = _drive_chat(monkeypatch, planner="jev", overrides={"moderation_source": "jev"}, plan_factory=mk)
+    assert out.startswith("I can only help with farming") and "compose_agent" not in seen or "first_client_token" not in stages.marks
+
+
+def test_jev_moderation_falls_back_to_llm_when_jev_escalates(monkeypatch):
+    mk = lambda: Plan(intent="unknown", tool_calls=[], escalate=True, escalate_reason="jev unavailable")
+    out, seen, stages, sink = _drive_chat(monkeypatch, planner="jev", overrides={"moderation_source": "jev"}, plan_factory=mk)
+    assert "moderation" in seen and stages.meta["moderation_source"] == "llm-fallback"
+    assert out == "legacy answer"
 
 
 def test_pipelined_translation_preserves_order_and_overlaps(monkeypatch):

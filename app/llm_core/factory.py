@@ -119,6 +119,9 @@ def _capture_http_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
         event_hooks={"request": [_capture_request_hook]},
         timeout=httpx.Timeout(600.0, connect=5.0),
+        # Default keepalive_expiry is 5 s: between turns the pooled connection
+        # dies and each model call pays a new TLS handshake. Keep it much longer.
+        limits=httpx.Limits(max_keepalive_connections=32, max_connections=128, keepalive_expiry=600.0),
     )
 
 

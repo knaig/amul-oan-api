@@ -62,6 +62,11 @@ class PlannerSettings:
     # Translate answer batches concurrently with generation (and with each other,
     # in order) instead of stalling the model between batches.
     pipelined_translation: bool = False
+    # Safety check source for the Jev arm: "llm" (the moderation agent, as today) or
+    # "jev" (a Choice in the same Jev request as the plan; LLM fallback if Jev is down).
+    moderation_source: str = "llm"
+    moderation_min_confidence: float = 0.60   # below this a non-valid verdict is treated as valid (prompt rule 4)
+    moderation_compare: bool = False          # also run the LLM moderation in the background and log agreement
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -92,6 +97,9 @@ class PlannerSettings:
             history_pairs=_int("PLANNER_HISTORY_PAIRS", 3),
             concurrent_moderation=_bool("PLANNER_CONCURRENT_MODERATION", False),
             pipelined_translation=_bool("PLANNER_PIPELINED_TRANSLATION", False),
+            moderation_source=("jev" if str(get_config_value("PLANNER_MODERATION_SOURCE", "llm") or "llm").strip().lower() == "jev" else "llm"),
+            moderation_min_confidence=_float("PLANNER_MODERATION_MIN_CONFIDENCE", 0.60),
+            moderation_compare=_bool("PLANNER_MODERATION_COMPARE", False),
         )
 
     def merged(self, overrides: Optional[dict]) -> "PlannerSettings":

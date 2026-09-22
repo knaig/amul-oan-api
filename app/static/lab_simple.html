@@ -65,8 +65,9 @@
       <div><label>Pick a farmer question</label><select id="q"></select></div>
       <div style="display:flex; gap:8px"><button class="btn" id="ask">Ask both ways</button><button class="btn secondary" id="all">Run all</button></div>
     </div>
-    <div class="ask" style="margin-top:10px"><div><label>Models for the grey steps</label><select id="prof"><option value="fast" selected>fast: gemini-flash-lite translates, gpt-4.1-mini checks, gpt-4.1 writes</option><option value="gpt41">standard: gpt-4.1 / gpt-4.1-mini everywhere (production-like)</option><option value="gpt41mini">cheap: gpt-4.1-mini writes too</option></select></div></div>
+    <div class="ask" style="margin-top:10px"><div><label>Models for the grey steps</label><select id="prof"><option value="gpt41" selected>standard: gpt-4.1 writes, gpt-4.1-mini translates and checks (production-like)</option><option value="fast">experimental: gemini-flash-lite via OpenRouter translates (measured no faster from here)</option><option value="gpt41mini">cheap: gpt-4.1-mini writes too</option></select></div></div>
     <label style="margin-top:10px; display:flex; gap:8px; align-items:center; font-size:14px; color:var(--ink)"><input type="checkbox" id="pipe_tr" checked> Translate the answer in parallel with writing it (both ways)</label>
+    <label style="margin-top:6px; display:flex; gap:8px; align-items:center; font-size:14px; color:var(--ink)"><input type="checkbox" id="jev_mod" checked> NEW way: let Jev do the safety check inside the same request (no separate safety call; the language model's verdict is still logged for comparison)</label>
     <label style="margin-top:6px; display:flex; gap:8px; align-items:center; font-size:14px; color:var(--ink)"><input type="checkbox" id="par_mod" checked> Run the safety check in parallel with answering, the way the phone bot does (applies to both ways; answer is held until the check passes)</label>
     <div class="status" id="status" style="margin-top:8px"></div>
   </div>
@@ -165,7 +166,8 @@ function segments(arm, d){
     let n = 2; while (s['model_request_'+n]) { seq.push({k:'write', label: n === 2 ? 'model writes answer' : 'model call #'+n, ms:s['model_request_'+n], c:'var(--c-write)'}); n++; }
     if (n === 2) seq.push({k:'write', label:'model writes answer', ms:Math.max(0, d.stages.total_ms - seq.reduce((a,x)=>a+x.ms,0)), c:'var(--c-write)'});
   } else {
-    seq.push({k:'plan', label:'Jev wait', ms:s.plan || 0, c:'var(--c-plan)'});
+    if (d.stages.meta.moderation_source === 'jev') { const i = seq.findIndex(x => x.k === 'safety'); if (i >= 0) seq.splice(i, 1); }
+    seq.push({k:'plan', label: d.stages.meta.moderation_source === 'jev' ? 'Jev: safety check + decide' : 'Jev wait', ms:s.plan || 0, c:'var(--c-plan)'});
     if (toolMs) seq.push({k:'data', label:'fetch data', ms:toolMs, c:'var(--c-data)', dim:true});
     seq.push({k:'write', label:'model writes answer', ms:s.compose || s.model_request_1 || 0, c:'var(--c-write)'});
   }
@@ -186,7 +188,7 @@ function render(){
   drawTrack('track-a', segA, scale, A.stages.marks.first_client_token);
   // Jev's own call runs in parallel with the safety check: show it as a thin bar under that segment.
   const mod = B.stages.spans.moderation || 0, pre = B.stages.spans.pretranslation || 0, jev = B.stages.meta.jev_ms || 0;
-  const par = jev ? `<div class="seg par" style="left:${pre/scale*100}%;width:${Math.min(jev,mod||jev)/scale*100}%;background:var(--c-plan)" title="Jev decides what to fetch: ${fmt(jev)} (in parallel with the safety check)">Jev decides · ${fmt(jev)}</div>` : '';
+  const par = (jev && B.stages.meta.moderation_source !== 'jev') ? `<div class="seg par" style="left:${pre/scale*100}%;width:${Math.min(jev,mod||jev)/scale*100}%;background:var(--c-plan)" title="Jev decides what to fetch: ${fmt(jev)} (in parallel with the safety check)">Jev decides · ${fmt(jev)}</div>` : '';
   drawTrack('track-b', segB, scale, B.stages.marks.first_client_token, par);
   $('axis-mid').textContent = fmt(scale/2); $('axis-end').textContent = fmt(scale);
   $('a-total').textContent = 'whole answer in ' + fmt(A.stages.total_ms) + ' (wall clock, laptop)'; $('b-total').textContent = 'whole answer in ' + fmt(B.stages.total_ms) + ' (wall clock, laptop)';
@@ -205,7 +207,9 @@ function render(){
   ].filter(Boolean).map(x => `<li>${x}</li>`).join('');
   $('steps-b').innerHTML = [
     `Translated the question to English <b>${fmt(B.stages.spans.pretranslation)}</b>`,
-    `Checked it is a farming question <b>${fmt(B.stages.spans.moderation)}</b> — and <b>at the same time</b> Jev decided what to fetch in <b>${fmt(B.stages.meta.jev_ms)}</b> → ${plannedB.length ? plannedB.join(', ') : 'nothing to fetch'}${B.stages.meta.escalated ? ' <span style="color:var(--bad)">(Jev unsure → handed to the old way)</span>' : ''}`,
+    B.stages.meta.moderation_source === 'jev'
+      ? `Jev checked it is a farming question <b>and</b> decided what to fetch in <b>one</b> request, <b>${fmt(B.stages.meta.jev_ms)}</b> → ${plannedB.length ? plannedB.join(', ') : 'nothing to fetch'}${B.stages.meta.moderation_agree === false ? ` <span style="color:var(--bad)">(the language model's check disagreed: ${B.stages.meta.moderation_llm_category})</span>` : B.stages.meta.moderation_agree === true ? ' <span class="muted">(language model agreed)</span>' : ''}${B.stages.meta.escalated ? ' <span style="color:var(--bad)">(Jev unsure → handed to the old way)</span>' : ''}`
+      : `Checked it is a farming question <b>${fmt(B.stages.spans.moderation)}</b> — and <b>at the same time</b> Jev decided what to fetch in <b>${fmt(B.stages.meta.jev_ms)}</b> → ${plannedB.length ? plannedB.join(', ') : 'nothing to fetch'}${B.stages.meta.escalated ? ' <span style="color:var(--bad)">(Jev unsure → handed to the old way)</span>' : ''}`,
     (B.tools||[]).length ? `Fetched it <b>${fmt(Math.max(...B.tools.map(t=>t.ms||0)))}</b>` : null,
     `Asked the model <b>once</b> to write the answer; first word after <b>${fmt(B.stages.marks.first_client_token - B.stages.marks.agent_start)}</b>`,
   ].filter(Boolean).map(x => `<li>${x}</li>`).join('');
@@ -219,7 +223,7 @@ function render(){
   const pct = (a,b) => a ? Math.round((a-b)/a*100) : null;
   const cards = [
     {v: (dt >= 0 ? '−' : '+') + fmt(Math.abs(dt)), t: dt >= 0 ? `relevant time (${fmt(ttA)} → ${fmt(ttB)}): decide + write to first word` : `relevant time (${fmt(ttA)} → ${fmt(ttB)}) — slower this run (model latency varies)`, good: dt >= 0},
-    {v: `${A.stages.meta.model_requests || 2} → 1`, t: 'language-model calls', good: (A.stages.meta.model_requests||2) > 1},
+    {v: `${(A.stages.meta.model_requests || 2) + 1} → ${B.stages.meta.moderation_source === 'jev' ? 1 : 2}`, t: 'language-model calls incl. the safety check', good: true},
     {v: tokA ? `−${pct(tokA, tokB)}%` : '—', t: `tokens to the language model (${(tokA/1000).toFixed(1)}k → ${(tokB/1000).toFixed(1)}k, plus ${(jevTok/1000).toFixed(1)}k cheap Jev tokens)`, good: tokA > tokB},
     {v: costA != null ? `−${pct(costA, costB)}%` : '—', t: costA != null ? `cost per question ($${costA.toFixed(4)} → $${costB.toFixed(4)}, ${model})` : 'cost (unknown model price)', good: costA != null && costA > costB},
   ];
@@ -253,7 +257,7 @@ async function ask(idx, session){
   for (const arm of ['llm','jev']) {
     const el = arm === 'llm' ? 'ans-a' : 'ans-b'; const t0 = performance.now(); let first = false;
     $('status').textContent = `${arm === 'llm' ? 'TODAY' : 'NEW'} way: “${item.en}”…`;
-    const r = await fetch(API + '/lab/turn', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({query:item.q, arms:[arm], session_id: sid, source_lang:'gu', target_lang:'gu', mobile:'9876543210', dry_run_side_effects:false, planner_overrides:{concurrent_moderation: $('par_mod').checked, pipelined_translation: $('pipe_tr').checked}, model_profile: $('prof').value})});
+    const r = await fetch(API + '/lab/turn', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({query:item.q, arms:[arm], session_id: sid, source_lang:'gu', target_lang:'gu', mobile:'9876543210', dry_run_side_effects:false, planner_overrides:{concurrent_moderation: $('par_mod').checked, pipelined_translation: $('pipe_tr').checked, moderation_source: $('jev_mod').checked ? 'jev' : 'llm', moderation_compare: $('jev_mod').checked}, model_profile: $('prof').value})});
     const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
     while (true) { const {value, done} = await reader.read(); if (done) break; buf += dec.decode(value, {stream:true});
       let i; while ((i = buf.indexOf('\n\n')) >= 0) { const raw = buf.slice(0, i); buf = buf.slice(i+2); const line = raw.split('\n').find(l => l.startsWith('data: ')); if (!line) continue; const e = JSON.parse(line.slice(6));

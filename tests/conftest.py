@@ -8,6 +8,9 @@ import pytest
 # voice-style concurrent mode on. Environment beats .env, so pin it off here.
 os.environ.setdefault("PLANNER_CONCURRENT_MODERATION", "false")
 os.environ.setdefault("PLANNER_MODE", "llm")
+os.environ.setdefault("PLANNER_MODERATION_SOURCE", "llm")
+os.environ.setdefault("PLANNER_MODERATION_COMPARE", "false")
+os.environ.setdefault("PLANNER_PIPELINED_TRANSLATION", "false")
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:

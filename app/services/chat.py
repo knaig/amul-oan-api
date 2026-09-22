@@ -616,7 +616,47 @@ async def stream_chat_messages(
 
             _mod_task = None
             moderation_data = None
-            if planner_settings.concurrent_moderation:
+            _plan_task_for_verdict = turn_sink.get("plan_task")
+            _jev_moderates = (
+                arm == "jev" and persona == "farmer" and planner_settings.moderation_source == "jev"
+                and _plan_task_for_verdict is not None
+            )
+            if _jev_moderates:
+                # The safety check is a Choice in the SAME Jev request as the plan: no
+                # separate model call. If Jev is unavailable (plan escalated), fall back
+                # to the moderation agent so no turn goes unchecked.
+                user_message = f"{last_response}{deps.get_user_message()}"
+                stages.meta["moderation_source"] = "jev"
+
+                async def _verdict_from_plan():
+                    plan = await _plan_task_for_verdict
+                    if not plan.escalate and plan.moderation_category:
+                        cat, action = plan.moderation_category, plan.moderation_action or ""
+                        stages.meta["moderation_confidence"] = plan.moderation_confidence
+                    else:
+                        stages.meta["moderation_source"] = "llm-fallback"
+                        stages.start("moderation")
+                        try:
+                            run = await execution.run(_LlmStep.MODERATION, active_moderation_agent, user_message)
+                        finally:
+                            stages.end("moderation")
+                        cat, action = run.output.category, run.output.action
+                    return SimpleNamespace(category=cat, action=action, rejected=cat != "valid_agricultural",
+                                           text=f"**Moderation Recommendation:** {action} ({cat.replace('_', ' ').title()})")
+
+                _mod_task = asyncio.create_task(_verdict_from_plan())
+                deps.set_moderation_task(_mod_task)
+                if planner_settings.moderation_compare:
+                    async def _compare():
+                        try:
+                            run = await execution.run(_LlmStep.MODERATION, active_moderation_agent, user_message)
+                            verdict = await _mod_task
+                            stages.meta["moderation_llm_category"] = run.output.category
+                            stages.meta["moderation_agree"] = run.output.category == verdict.category
+                        except Exception as exc:  # logging only
+                            logger.debug("moderation compare failed: %s", exc)
+                    turn_sink["moderation_compare_task"] = asyncio.create_task(_compare())
+            elif planner_settings.concurrent_moderation:
                 # Voice-style: moderation runs alongside the agent step; tokens are
                 # held by the gate below until the verdict. Booking/loan tools wait
                 # on the same task via deps.ensure_in_scope().
@@ -640,7 +680,7 @@ async def stream_chat_messages(
                 deps.set_moderation_task(_mod_task)
                 stages.meta["concurrent_moderation"] = True
             try:
-                if planner_settings.concurrent_moderation:
+                if _jev_moderates or planner_settings.concurrent_moderation:
                     pass
                 else:
                     user_message = f"{last_response}{deps.get_user_message()}"
@@ -1086,6 +1126,12 @@ async def stream_chat_messages(
             _turn_outcome = "success"
 
             # Side-by-side observability (best effort, never breaks the turn).
+            _cmp = turn_sink.pop("moderation_compare_task", None)
+            if _cmp is not None:
+                try:
+                    await asyncio.wait_for(_cmp, timeout=3)
+                except Exception:
+                    pass
             try:
                 final_text = "".join(translated_output_chunks) if needs_output_translation and translated_output_chunks else "".join(raw_output_chunks)
                 turn_sink["answer"] = final_text

@@ -42,12 +42,37 @@ def _get_client(timeout_s: float) -> Any:
     if not key:
         raise JevUnavailable("TYPESAFE_API_KEY is not set")
     if _client is None:
+        import httpx
+        # httpx drops idle keep-alive connections after 5 s by default; a turn
+        # arrives less often than that, so every plan paid a fresh TLS handshake
+        # (~0.9 s from India). Keep the connection for a long time instead.
+        http_client = httpx.AsyncClient(
+            timeout=timeout_s,
+            limits=httpx.Limits(max_keepalive_connections=8, max_connections=32, keepalive_expiry=600.0),
+        )
         _client = AsyncTypeSafeClient(
             api_key=key,
             timeout=timeout_s,
             retry=RetryPolicy(max_retries=2) if RetryPolicy else None,
+            http_client=http_client,
         )
     return _client
+
+
+async def keepalive_loop(interval_s: float = 25.0, *, model: str = "jev-latest") -> None:
+    """Keep the TypeSafe connection (and the server side) warm with a tiny request.
+
+    One noul over a one-line state: ~40 input tokens, i.e. about $0.000002 per ping.
+    Runs only when a key is configured; any failure is logged and retried next tick."""
+    import asyncio
+
+    while True:
+        try:
+            if available():
+                await evaluate("ping", {"ok": {"type": "noul", "instructions": "Is this the word ping?"}}, model=model, timeout_s=5.0)
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.debug("jev keepalive ping failed: %s", exc)
+        await asyncio.sleep(interval_s)
 
 
 def _plain(answer: Any) -> dict[str, Any]:

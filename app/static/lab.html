@@ -101,6 +101,8 @@
       <label><input type="checkbox" id="persist" checked> Persist traces to comparison DB</label>
       <label><input type="checkbox" id="concurrent_moderation"> Safety check in parallel with the agent step (voice-style; both arms)</label>
       <label><input type="checkbox" id="pipelined_translation"> Translate answer batches in parallel with generation (both arms)</label>
+      <div class="row"><div><label>Safety check on the Jev arm</label><select id="moderation_source"><option value="llm">moderation agent (LLM), as today</option><option value="jev">Jev, inside the plan request (LLM fallback)</option></select></div>
+      <div><label style="margin-top:22px"><input type="checkbox" id="moderation_compare"> also run LLM check, log agreement</label></div></div>
       <label>Tools enabled (both arms)</label>
       <div class="tools" id="tools"></div>
       <div class="row">
@@ -172,13 +174,13 @@ async function loadConfig(){
   $('sample').innerHTML = '<option value="">— pick a sample —</option>' + (c.samples||[]).map((s,i) => `<option value="${i}">${(s.expected_tools||[]).join('+') || 'no tool'} · ${s.query_en || s.query}</option>`).join('');
   $('sample').onchange = () => { const s = (c.samples||[])[$('sample').value]; if (s) { $('query').value = s.query; $('source_lang').value = 'gu'; $('target_lang').value = 'gu'; if (s.mobile) $('mobile').value = s.mobile; } };
   $('model_profile').innerHTML = (c.profiles||[]).map(p => `<option value="${p.name}">${p.name} · ${p.agent_model||''}${p.weight?' (default)':''}</option>`).join('');
-  for (const [k,v] of Object.entries(c.defaults)) { const el = $(k); if (!el) continue; if (el.type === 'checkbox') { if (k === 'concurrent_moderation' || k === 'pipelined_translation') el.checked = !!v; } else if (typeof v !== 'object') el.value = v; }
+  for (const [k,v] of Object.entries(c.defaults)) { const el = $(k); if (!el) continue; if (el.type === 'checkbox') { if (k === 'concurrent_moderation' || k === 'pipelined_translation' || k === 'moderation_compare') el.checked = !!v; } else if (typeof v !== 'object') el.value = v; }
   $('dry_run').checked = false;
 }
 function overrides(){
   const o = {};
   for (const k of ['search_fanout','tool_choice_min_confidence','extra_tool_noul_threshold','yes_threshold','history_pairs','milk_default_range_days','search_top_k']) o[k] = Number($(k).value);
-  o.low_confidence_policy = $('low_confidence_policy').value; o.typesafe_model = $('typesafe_model').value; o.concurrent_moderation = $('concurrent_moderation').checked; o.pipelined_translation = $('pipelined_translation').checked;
+  o.low_confidence_policy = $('low_confidence_policy').value; o.typesafe_model = $('typesafe_model').value; o.concurrent_moderation = $('concurrent_moderation').checked; o.pipelined_translation = $('pipelined_translation').checked; o.moderation_source = $('moderation_source').value; o.moderation_compare = $('moderation_compare').checked;
   return o;
 }
 function disabledTools(){ return [...document.querySelectorAll('#tools input')].filter(i => !i.checked).map(i => i.dataset.tool); }

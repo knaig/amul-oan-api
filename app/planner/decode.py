@@ -14,6 +14,19 @@ from app.planner.questions import TurnGates
 
 HEALTH_OFFER_LINE = "It seems your animal might need medical attention. Would you like to book a health call?"
 
+# Fixed decline lines per moderation category (English; the pipeline localises them).
+MODERATION_ACTIONS = {
+    "valid_agricultural": "Proceed with the query.",
+    "invalid_language": "I can reply in English, Gujarati, Hindi, Bengali, Marathi or Punjabi. Which of these would you like?",
+    "invalid_non_agricultural": "I can only help with farming, dairy and livestock questions. Please ask me about your animals, milk, fodder, schemes or prices.",
+    "invalid_external_reference": "I answer only from Amul and agricultural sources, not that reference. Please ask a farming question.",
+    "invalid_compound_mixed": "Let us stick to the farming part of your question. Please ask it on its own and I will help.",
+    "unsafe_illegal": "I cannot help with that. I can help with animal health, dairy and farming questions.",
+    "political_controversial": "I do not discuss political topics. I can help with your animals, milk and farming.",
+    "cultural_sensitive": "I do not discuss that topic. I can help with your animals, milk and farming.",
+    "role_obfuscation": "I am Sarlaben, Amul's farming assistant, and I can only help with agriculture and dairy questions.",
+}
+
 
 class _Answers:
     def __init__(self, raw: dict[str, Any]):
@@ -105,6 +118,14 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
         return Plan(intent="clinical", tool_calls=calls, confidence=min(a.used or [need]) if a.used else need,
                     answers=answers)
 
+    moderation_category = None
+    moderation_conf = None
+    if "moderation" in answers:
+        moderation_category = a.choice("moderation", "valid_agricultural")
+        moderation_conf = a.conf("moderation")
+        # Prompt rule 4: when uncertain, classify as valid and let the answer step decide.
+        if moderation_category != "valid_agricultural" and moderation_conf < settings.moderation_min_confidence:
+            moderation_category = "valid_agricultural"
     intent = a.choice("intent", "clinical")
     primary = a.choice("primary_tool", "none_answer_directly")
     primary_conf = a.conf("primary_tool")
@@ -312,7 +333,10 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
     used = [c for c in a.used if c > 0]
     plan_conf = min(used) if used else primary_conf
     plan = Plan(intent=intent, tool_calls=calls, compose_notes=notes, clarification=clarification,
-                confidence=plan_conf, answers=answers)
+                confidence=plan_conf, answers=answers,
+                moderation_category=moderation_category,
+                moderation_action=MODERATION_ACTIONS.get(moderation_category) if moderation_category else None,
+                moderation_confidence=moderation_conf)
 
     # ── Confidence gate (accuracy floor) ────────────────────────────────────
     # A route decided only by Jev's tool/intent choice must clear the threshold;

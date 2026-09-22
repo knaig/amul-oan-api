@@ -48,7 +48,21 @@ async def lifespan(app: FastAPI):
     await start_scheme_scheduler()
     await start_farmer_refresh_worker()
     await start_health_poller()
+    # Jev connection keep-alive: only when a TypeSafe key is set AND the planner
+    # can be used (mode jev/shadow, or the lab is enabled). Cancelled on shutdown.
+    _jev_keepalive = None
+    try:
+        from app.planner import jev as _jev
+        from app.planner.config import PlannerSettings as _PS, lab_enabled as _lab_enabled
+        if _jev.available() and (_PS.from_env().mode != "llm" or _lab_enabled()):
+            import asyncio as _asyncio
+            _jev_keepalive = _asyncio.create_task(_jev.keepalive_loop(model=_PS.from_env().typesafe_model))
+            print("🔥 Jev keepalive ping started", flush=True)
+    except Exception as _ka_exc:  # pragma: no cover
+        print(f"⚠️  Jev keepalive not started: {_ka_exc}", flush=True)
     yield
+    if _jev_keepalive is not None:
+        _jev_keepalive.cancel()
     # Shutdown
     await stop_health_poller()
     await stop_farmer_refresh_worker()
