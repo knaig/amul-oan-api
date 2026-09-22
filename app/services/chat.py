@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import nullcontext
 from typing import Any, AsyncGenerator
 from functools import lru_cache
@@ -39,6 +40,7 @@ from app.personas import ChatPersona
 from app.chat_artifacts import encode_chat_artifacts
 from app.planner import shadow as _planner_shadow, tracestore as _planner_trace
 from app.planner.arms import jev_agent_stream, legacy_tool_calls, start_plan_early
+from app.planner.gate import ModerationRejected, gated as _gate_until_verdict
 from app.planner.config import PlannerSettings, planner_override_enabled
 from app.planner.models import StageRecorder
 
@@ -610,96 +612,120 @@ async def stream_chat_messages(
             else:
                 last_response = ""
 
-            try:
+            _mod_task = None
+            moderation_data = None
+            if planner_settings.concurrent_moderation:
+                # Voice-style: moderation runs alongside the agent step; tokens are
+                # held by the gate below until the verdict. Booking/loan tools wait
+                # on the same task via deps.ensure_in_scope().
                 user_message = f"{last_response}{deps.get_user_message()}"
-                _lf_mod = get_langfuse_client() if get_langfuse_client else None
-                _mod_obs_ctx = (
-                    _lf_mod.start_as_current_observation(
-                        # Distinct from Pydantic's "Moderation Agent run" OTEL span to avoid triple duplicate sidebar labels.
-                        name="Moderation",
-                        as_type="generation",
-                        input={
-                            # Actual model the moderation_agent.run uses below
-                            # (gemma for OSS, legacy model otherwise) — not LLM_MODEL_NAME,
-                            # which mislabeled OSS gemma moderation as gpt in dashboards.
-                            "model_name": request_model_name,
-                            "query": user_message,
-                            "session_id": session_id_safe,
-                        },
-                        model=request_model_name,
-                        metadata={"pipeline": _PIPELINE_NAME},
-                    )
-                    if _lf_mod
-                    else nullcontext()
-                )
-                with _mod_obs_ctx as mod_obs:
-                    stages.start("moderation")
-                    moderation_run = await execution.run(
-                        _LlmStep.MODERATION,
-                        active_moderation_agent,
-                        user_message,
-                    )
-                    stages.end("moderation")
-                    moderation_data = moderation_run.output
-                    logger.info(
-                        "request_id=%s moderation_category=%s moderation_action=%s",
-                        request_id,
-                        moderation_data.category,
-                        moderation_data.action,
-                    )
-                    if mod_obs is not None:
-                        mod_obs.update(
-                            output={
-                                "category": moderation_data.category,
-                                "action": moderation_data.action,
-                            }
+                stages.start("moderation")
+
+                async def _moderate_concurrently():
+                    try:
+                        run = await execution.run(_LlmStep.MODERATION, active_moderation_agent, user_message)
+                    finally:
+                        stages.end("moderation")
+                    out = run.output
+                    out.rejected = out.category != "valid_agricultural"  # read by ensure_in_scope
+                    return out
+
+                _mod_task = asyncio.create_task(_moderate_concurrently())
+                deps.set_moderation_task(_mod_task)
+                stages.meta["concurrent_moderation"] = True
+            try:
+                if planner_settings.concurrent_moderation:
+                    pass
+                else:
+                    user_message = f"{last_response}{deps.get_user_message()}"
+                    _lf_mod = get_langfuse_client() if get_langfuse_client else None
+                    _mod_obs_ctx = (
+                        _lf_mod.start_as_current_observation(
+                            # Distinct from Pydantic's "Moderation Agent run" OTEL span to avoid triple duplicate sidebar labels.
+                            name="Moderation",
+                            as_type="generation",
+                            input={
+                                # Actual model the moderation_agent.run uses below
+                                # (gemma for OSS, legacy model otherwise) — not LLM_MODEL_NAME,
+                                # which mislabeled OSS gemma moderation as gpt in dashboards.
+                                "model_name": request_model_name,
+                                "query": user_message,
+                                "session_id": session_id_safe,
+                            },
+                            model=request_model_name,
+                            metadata={"pipeline": _PIPELINE_NAME},
                         )
-                    # Generate suggestions after moderation passes
-                    if moderation_data.category == "valid_agricultural" and persona == "farmer":
-                        logger.info(f"Triggering suggestions generation for session {session_id}")
-                        try:
-                            suggestions_cache_key = f"suggestions_{session_id}_{target_lang}"
-                            status_key = f"{suggestions_cache_key}:pending"
-                            # Mark pending and clear stale suggestions so callers wait for fresh output.
-                            await set_cache(status_key, True, ttl=SUGGESTIONS_PENDING_TTL)
-                            await cache.delete(suggestions_cache_key)
-                            background_tasks.add_task(
-                                create_suggestions, session_id, target_lang, execution
-                            )
-                            logger.info("Successfully added suggestions task")
-                        except Exception as e:
-                            logger.error(f"Error adding suggestions task: {str(e)}")
-                    elif moderation_data.category != "valid_agricultural":
-                        # Hard gate: do not run retrieval/answer agent for moderated non-agricultural requests.
-                        decline_text = (moderation_data.action or "").strip() or (
-                            "I can only answer agriculture and livestock related questions."
+                        if _lf_mod
+                        else nullcontext()
+                    )
+                    with _mod_obs_ctx as mod_obs:
+                        stages.start("moderation")
+                        moderation_run = await execution.run(
+                            _LlmStep.MODERATION,
+                            active_moderation_agent,
+                            user_message,
                         )
-                        decline_text = await localize_system_text(decline_text)
+                        stages.end("moderation")
+                        moderation_data = moderation_run.output
                         logger.info(
-                            "request_id=%s moderation_blocked=True response_preview=%s",
+                            "request_id=%s moderation_category=%s moderation_action=%s",
                             request_id,
-                            decline_text[:160],
+                            moderation_data.category,
+                            moderation_data.action,
                         )
-                        # The decline IS the turn's answer. Without this the trace
-                        # carries no output and the chat export records the turn as
-                        # a blank answer (~470 rows on 2026-08-06). Same best-effort
-                        # shape as the identity path: telemetry never breaks a turn.
-                        if get_langfuse_client:
+                        if mod_obs is not None:
+                            mod_obs.update(
+                                output={
+                                    "category": moderation_data.category,
+                                    "action": moderation_data.action,
+                                }
+                            )
+                        # Generate suggestions after moderation passes
+                        if moderation_data.category == "valid_agricultural" and persona == "farmer":
+                            logger.info(f"Triggering suggestions generation for session {session_id}")
                             try:
-                                langfuse = get_langfuse_client()
-                                langfuse.set_current_trace_io(output=decline_text)
+                                suggestions_cache_key = f"suggestions_{session_id}_{target_lang}"
+                                status_key = f"{suggestions_cache_key}:pending"
+                                # Mark pending and clear stale suggestions so callers wait for fresh output.
+                                await set_cache(status_key, True, ttl=SUGGESTIONS_PENDING_TTL)
+                                await cache.delete(suggestions_cache_key)
+                                background_tasks.add_task(
+                                    create_suggestions, session_id, target_lang, execution
+                                )
+                                logger.info("Successfully added suggestions task")
                             except Exception as e:
-                                logger.warning("Langfuse: failed to record moderation decline output: %s", e)
-                        # Moderation ran and decided: the turn ended the way it was
-                        # supposed to. Recording "error" here inflated the error rate
-                        # by one row per moderated query.
-                        _turn_outcome = "success"
-                        _pt = turn_sink.pop("plan_task", None)
-                        if _pt is not None:
-                            _pt.cancel()
-                        yield decline_text
-                        return
-                    deps.update_moderation_str(str(moderation_data))
+                                logger.error(f"Error adding suggestions task: {str(e)}")
+                        elif moderation_data.category != "valid_agricultural":
+                            # Hard gate: do not run retrieval/answer agent for moderated non-agricultural requests.
+                            decline_text = (moderation_data.action or "").strip() or (
+                                "I can only answer agriculture and livestock related questions."
+                            )
+                            decline_text = await localize_system_text(decline_text)
+                            logger.info(
+                                "request_id=%s moderation_blocked=True response_preview=%s",
+                                request_id,
+                                decline_text[:160],
+                            )
+                            # The decline IS the turn's answer. Without this the trace
+                            # carries no output and the chat export records the turn as
+                            # a blank answer (~470 rows on 2026-08-06). Same best-effort
+                            # shape as the identity path: telemetry never breaks a turn.
+                            if get_langfuse_client:
+                                try:
+                                    langfuse = get_langfuse_client()
+                                    langfuse.set_current_trace_io(output=decline_text)
+                                except Exception as e:
+                                    logger.warning("Langfuse: failed to record moderation decline output: %s", e)
+                            # Moderation ran and decided: the turn ended the way it was
+                            # supposed to. Recording "error" here inflated the error rate
+                            # by one row per moderated query.
+                            _turn_outcome = "success"
+                            _pt = turn_sink.pop("plan_task", None)
+                            if _pt is not None:
+                                _pt.cancel()
+                            yield decline_text
+                            return
+                        deps.update_moderation_str(str(moderation_data))
             except Exception as e:
                 logger.error("request_id=%s moderation_error=%s", request_id, str(e))
                 fail_closed_message = await localize_system_text(GENERIC_UNAVAILABLE_MESSAGE_EN)
@@ -765,7 +791,7 @@ async def stream_chat_messages(
                     name=agent_observation_name,
                     as_type="generation",
                     input={
-                        "action": moderation_data.action,
+                        "action": getattr(moderation_data, "action", "pending (concurrent moderation)"),
                         "model_name": request_model_name,
                         "persona": persona,
                     },
@@ -912,6 +938,8 @@ async def stream_chat_messages(
 
                 if persona == "doctor":
                     english_src = _sanitize_doctor_stream(english_src)
+                if _mod_task is not None:
+                    english_src = _gate_until_verdict(english_src, _mod_task, is_rejected=lambda m: bool(getattr(m, "rejected", False)))
 
                 client_src = _stream_to_client(english_src)
                 if persona == "doctor":
@@ -919,9 +947,31 @@ async def stream_chat_messages(
                     # post-translation rather than present in the English answer.
                     client_src = _sanitize_doctor_stream(client_src)
 
-                async for _out in client_src:
-                    stages.mark("first_client_token")
-                    yield _out
+                try:
+                    async for _out in client_src:
+                        stages.mark("first_client_token")
+                        yield _out
+                except ModerationRejected as _rej:
+                    moderation_data = _rej.moderation
+                    decline_text = (moderation_data.action or "").strip() or "I can only answer agriculture and livestock related questions."
+                    decline_text = await localize_system_text(decline_text)
+                    logger.info("request_id=%s moderation_blocked=True (concurrent) response_preview=%s", request_id, decline_text[:160])
+                    _turn_outcome = "success"
+                    yield decline_text
+                    return
+                if _mod_task is not None:
+                    # Verdict was 'allowed' (the gate let tokens through): finish the
+                    # bookkeeping the sequential path did before the agent ran.
+                    moderation_data = _mod_task.result()
+                    deps.update_moderation_str(str(moderation_data))
+                    if persona == "farmer":
+                        try:
+                            suggestions_cache_key = f"suggestions_{session_id}_{target_lang}"
+                            await set_cache(f"{suggestions_cache_key}:pending", True, ttl=SUGGESTIONS_PENDING_TTL)
+                            await cache.delete(suggestions_cache_key)
+                            background_tasks.add_task(create_suggestions, session_id, target_lang, execution)
+                        except Exception as e:
+                            logger.error(f"Error adding suggestions task: {str(e)}")
                 stages.mark("agent_done")
                 logger.info(f"Streaming complete for session {session_id}")
 
@@ -1020,6 +1070,13 @@ async def stream_chat_messages(
         except GeneratorExit:
             # Client hung up mid-stream. Re-raised so generator teardown is normal.
             _turn_outcome = "cancelled"
+            raise
+        except Exception as _exc:
+            if _mod_task is not None and _mod_task.done() and _mod_task.exception() is not None and "first_client_token" not in stages.marks:
+                # Concurrent moderation itself failed before any token was shown: fail closed.
+                logger.error("request_id=%s moderation_error=%s (concurrent)", session_id_safe, _mod_task.exception())
+                yield await localize_system_text(GENERIC_UNAVAILABLE_MESSAGE_EN)
+                return
             raise
         except BaseException:
             _turn_outcome = "error"

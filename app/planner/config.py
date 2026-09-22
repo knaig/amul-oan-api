@@ -55,6 +55,10 @@ class PlannerSettings:
     disabled_tools: list[str] = field(default_factory=list)
     # History context sent to Jev as state (message pairs).
     history_pairs: int = 3
+    # Voice-style: run the moderation request concurrently with the agent step and
+    # hold farmer-visible tokens until the verdict (side-effecting tools already
+    # wait on it via FarmerContext.ensure_in_scope). Applies to BOTH arms.
+    concurrent_moderation: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -83,6 +87,7 @@ class PlannerSettings:
             dry_run_side_effects=_bool("PLANNER_DRY_RUN_SIDE_EFFECTS", False),
             disabled_tools=disabled,
             history_pairs=_int("PLANNER_HISTORY_PAIRS", 3),
+            concurrent_moderation=_bool("PLANNER_CONCURRENT_MODERATION", False),
         )
 
     def merged(self, overrides: Optional[dict]) -> "PlannerSettings":

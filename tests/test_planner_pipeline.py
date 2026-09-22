@@ -120,7 +120,7 @@ def test_jev_arm_escalates_to_legacy_agent_when_plan_says_so(monkeypatch):
     assert record == [("stream", "legacy")] and stages.meta["escalated"] is True
 
 
-def _drive_chat(monkeypatch, *, planner, compose_chunks=("Give clean water daily.",)):
+def _drive_chat(monkeypatch, *, planner, compose_chunks=("Give clean water daily.",), overrides=None, moderation_category="valid_agricultural"):
     seen = []
     monkeypatch.setattr(chat_service, "propagate_attributes", None)
     monkeypatch.setattr(chat_service, "get_langfuse_client", None)
@@ -129,8 +129,9 @@ def _drive_chat(monkeypatch, *, planner, compose_chunks=("Give clean water daily
     monkeypatch.setattr(chat_service, "format_message_pairs", lambda *_a, **_kw: "")
 
     async def _moderate(user_message, model=None):
+        await asyncio.sleep(0.05)  # lets a concurrently started agent stream get ahead
         seen.append("moderation")
-        return SimpleNamespace(output=SimpleNamespace(category="valid_agricultural", action="allow"))
+        return SimpleNamespace(output=SimpleNamespace(category=moderation_category, action="I only answer farming questions."))
 
     def _legacy_iter(**_kw):
         seen.append("legacy_agent")
@@ -176,7 +177,7 @@ def _drive_chat(monkeypatch, *, planner, compose_chunks=("Give clean water daily
         async for chunk in chat_service.stream_chat_messages(
             query="How much water should I give my cow?", session_id="planner-wiring", source_lang="en", target_lang="en",
             channel="web", user_id="lab", history=[], user_info={}, background_tasks=BackgroundTasks(),
-            planner=planner, stages=stages, turn_sink=sink, compare_group="g1",
+            planner=planner, stages=stages, turn_sink=sink, compare_group="g1", planner_overrides=overrides,
         ):
             out.append(chunk)
         return "".join(out)
@@ -204,6 +205,20 @@ def test_chat_service_llm_arm_is_unchanged_and_traced(monkeypatch):
     assert "jev_plan" not in seen and "legacy_agent" in seen
     assert stages.meta["arm"] == "llm"
     assert [s for s in seen if isinstance(s, tuple)][0][1] == "llm"
+
+
+def test_concurrent_moderation_overlaps_agent_and_releases_tokens_after_verdict(monkeypatch):
+    out, seen, stages, sink = _drive_chat(monkeypatch, planner="jev", overrides={"concurrent_moderation": True})
+    assert out == "Give clean water daily."
+    order = [s for s in seen if isinstance(s, str)]
+    assert order.index("jev_plan") < order.index("moderation")  # planning did not wait for the verdict
+    assert stages.meta.get("concurrent_moderation") is True and "moderation" in stages.spans
+
+
+def test_concurrent_moderation_rejection_emits_only_the_decline(monkeypatch):
+    out, seen, stages, sink = _drive_chat(monkeypatch, planner="llm", overrides={"concurrent_moderation": True}, moderation_category="invalid_non_agricultural")
+    assert out == "I only answer farming questions."
+    assert "legacy answer" not in out and "first_client_token" not in stages.marks
 
 
 def test_dry_run_contextvar_stops_real_booking():

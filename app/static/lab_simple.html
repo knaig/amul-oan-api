@@ -62,6 +62,7 @@
       <div><label>Pick a farmer question</label><select id="q"></select></div>
       <div style="display:flex; gap:8px"><button class="btn" id="ask">Ask both ways</button><button class="btn secondary" id="all">Run all</button></div>
     </div>
+    <label style="margin-top:10px; display:flex; gap:8px; align-items:center; font-size:14px; color:var(--ink)"><input type="checkbox" id="par_mod" checked> Run the safety check in parallel with answering, the way the phone bot does (applies to both ways; answer is held until the check passes)</label>
     <div class="status" id="status" style="margin-top:8px"></div>
   </div>
 
@@ -240,7 +241,7 @@ async function ask(idx, session){
   for (const arm of ['llm','jev']) {
     const el = arm === 'llm' ? 'ans-a' : 'ans-b'; const t0 = performance.now(); let first = false;
     $('status').textContent = `${arm === 'llm' ? 'TODAY' : 'NEW'} way: “${item.en}”…`;
-    const r = await fetch(API + '/lab/turn', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({query:item.q, arms:[arm], session_id: sid, source_lang:'gu', target_lang:'gu', mobile:'9876543210', dry_run_side_effects:true})});
+    const r = await fetch(API + '/lab/turn', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({query:item.q, arms:[arm], session_id: sid, source_lang:'gu', target_lang:'gu', mobile:'9876543210', dry_run_side_effects:true, planner_overrides:{concurrent_moderation: $('par_mod').checked}})});
     const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
     while (true) { const {value, done} = await reader.read(); if (done) break; buf += dec.decode(value, {stream:true});
       let i; while ((i = buf.indexOf('\n\n')) >= 0) { const raw = buf.slice(0, i); buf = buf.slice(i+2); const line = raw.split('\n').find(l => l.startsWith('data: ')); if (!line) continue; const e = JSON.parse(line.slice(6));

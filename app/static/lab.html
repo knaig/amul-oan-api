@@ -99,6 +99,7 @@
       </div>
       <label style="margin-top:10px"><input type="checkbox" id="dry_run" checked> Dry-run side effects (bookings, loan code, SMS)</label>
       <label><input type="checkbox" id="persist" checked> Persist traces to comparison DB</label>
+      <label><input type="checkbox" id="concurrent_moderation"> Safety check in parallel with the agent step (voice-style; both arms)</label>
       <label>Tools enabled (both arms)</label>
       <div class="tools" id="tools"></div>
       <div class="row">
@@ -176,7 +177,7 @@ async function loadConfig(){
 function overrides(){
   const o = {};
   for (const k of ['search_fanout','tool_choice_min_confidence','extra_tool_noul_threshold','yes_threshold','history_pairs','milk_default_range_days','search_top_k']) o[k] = Number($(k).value);
-  o.low_confidence_policy = $('low_confidence_policy').value; o.typesafe_model = $('typesafe_model').value;
+  o.low_confidence_policy = $('low_confidence_policy').value; o.typesafe_model = $('typesafe_model').value; o.concurrent_moderation = $('concurrent_moderation').checked;
   return o;
 }
 function disabledTools(){ return [...document.querySelectorAll('#tools input')].filter(i => !i.checked).map(i => i.dataset.tool); }
