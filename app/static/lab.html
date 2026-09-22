@@ -157,7 +157,7 @@
 const API = location.pathname.replace(/\/lab\/?$/, '');
 const $ = id => document.getElementById(id);
 const arms = ['llm','jev'];
-const state = { audio:{}, traces:{}, mediaRecorder:null, chunks:[] };
+const state = { audio:{}, traces:{}, mediaRecorder:null, chunks:[], pendingReset:{} };
 
 function newSession(){ $('session_id').value = 'lab-' + Math.random().toString(36).slice(2,10); }
 $('newsession').onclick = newSession; newSession();
@@ -253,7 +253,7 @@ async function streamSSE(url, payload, onEvent){
 function handle(ev, done){
   const a = ev.arm;
   if (ev.type==='transcript') { $('transcript').textContent = `Transcript (${ev.stt_ms} ms STT): ${ev.text}`; $('query').value = ev.text; }
-  if (ev.type==='start') { $('status-'+a).textContent = 'running · history ' + ev.history_turns + ' turns'; }
+  if (ev.type==='start') { if (state.pendingReset[a]) { resetArm(a); delete state.pendingReset[a]; } $('status-'+a).textContent = 'running · history ' + ev.history_turns + ' turns'; }
   if (ev.type==='token') { $('answer-'+a).textContent += ev.text; if (!$('status-'+a).dataset.first) { $('status-'+a).dataset.first='1'; $('status-'+a).textContent = 'first token @ ' + ev.t_ms.toFixed(0) + ' ms'; } }
   if (ev.type==='plan') { $('plan-jev').textContent = JSON.stringify({intent: ev.intent, confidence: ev.confidence, escalate: ev.escalate, escalate_reason: ev.escalate_reason, jev_ms: ev.jev_ms, jev_input_tokens: ev.jev_input_tokens, model: ev.jev_model, tools: ev.tools, notes: ev.notes, answers: ev.answers}, null, 2); }
   if (ev.type==='done') { done[a] = ev; $('answer-en-'+a).textContent = (ev.query_en ? 'Q (en): ' + ev.query_en + '\n\n' : '') + (ev.answer_en || '(answer was already English)'); $('status-'+a).textContent = 'done'; $('status-'+a).className = 'badge ok'; delete $('status-'+a).dataset.first; kpis(a, ev); waterfall(a, ev); toolsTable(a, ev.tools); rating(a, ev.trace_id); agreement(done); }
@@ -261,8 +261,12 @@ function handle(ev, done){
   if (ev.type==='audio') { const audio = new Audio('data:audio/wav;base64,' + ev.audio_base64); const btn = document.createElement('button'); btn.className='btn secondary'; btn.textContent = `▶ Play ${a} answer (TTS ${ev.tts_ms} ms)`; btn.onclick = () => audio.play(); $('rate-'+a).appendChild(btn); }
   if (ev.type==='end') { loadHistory(); }
 }
-async function runTurn(extra){
-  const done = {}; arms.forEach(resetArm); $('transcript').textContent=''; $('send').disabled = true; $('demo').disabled = true;
+async function runTurn(extra, opts){
+  const done = {};
+  // Manual sends clear the cards immediately; the demo keeps the previous turn visible
+  // until the next turn's first event for that flow arrives (no blank flashes).
+  if (opts && opts.deferReset) { arms.forEach(a => { state.pendingReset[a] = true; }); } else { arms.forEach(resetArm); }
+  $('transcript').textContent=''; $('send').disabled = true; $('demo').disabled = true;
   try { await streamSSE(API + '/lab/turn', body(extra), ev => handle(ev, done)); } catch (e) { $('agree').innerHTML = `<span class="err">${e.message}</span>`; } finally { $('send').disabled = false; $('demo').disabled = false; }
   return done;
 }
@@ -289,13 +293,14 @@ $('demo').onclick = async () => {
     $('query').value = t.q; $('source_lang').value = 'gu'; $('target_lang').value = 'gu';
     $('mobile').value = t.mobile || '9876543210';
     $('session_id').value = t.session ? `demo-${runId}-${t.session}` : `demo-${runId}-${i}`;
-    const done = await runTurn();
+    const done = await runTurn(undefined, {deferReset: true});
     const ttft = d => d && d.stages ? (d.stages.marks.first_client_token - d.stages.marks.agent_start) : null;
     const tools = d => d && d.tools ? [...new Set(d.tools.map(x => x.name))].join(', ') || '—' : 'error';
     const a = ttft(done.llm), b = ttft(done.jev); const dl = (a!=null && b!=null) ? b - a : null;
     rows.push({i, t, a, b});
     $('demo-table').innerHTML += `<tr><td>${i+1}</td><td>${t.en}</td><td class="small muted">${t.tool}</td><td><code>${tools(done.llm)}</code></td><td>${a!=null?Math.round(a)+' ms':'—'}</td><td><code>${tools(done.jev)}</code></td><td>${b!=null?Math.round(b)+' ms':'—'}</td><td style="color:${dl<0?'var(--jev)':'var(--bad)'}">${dl!=null?(dl>0?'+':'')+Math.round(dl)+' ms':''}</td></tr>`;
-    await new Promise(r => setTimeout(r, 400));
+    $('demo-status').textContent = `demo ${runId}: turn ${i+1}/${DEMO.length} done — next turn in 3 s (results stay on screen until it starts)`;
+    await new Promise(r => setTimeout(r, 3000));
   }
   const ok = rows.filter(r => r.a!=null && r.b!=null); const med = xs => { const s=[...xs].sort((x,y)=>x-y); return s.length? s[Math.floor(s.length/2)] : null; };
   const saved = med(ok.map(r => r.a - r.b));
