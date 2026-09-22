@@ -195,6 +195,23 @@ Caveats: n=10 per run on a laptop over the public internet; tool latencies are s
 constants; ratings not yet collected. Re-run `scripts/planner_eval.py` with a larger set and
 real backends before quoting numbers externally.
 
+### 4c. Which number to look at
+
+*Planner-relevant time* = deciding what to fetch + the model writing until the first word
+(`relevant_ms` in the trace store; the big number on the Simple view). Profile load, question
+translation, safety check, data fetch and answer translation are identical work in both
+flows and depend on where the servers are, so the Simple view greys them out and excludes
+them from the saving. On this laptop the Jev call is 0.36 to 0.5 s warm with occasional
+1.1 to 1.3 s network spikes; gpt-4.1's request #1 is 0.9 to 1.3 s.
+
+### 4d. The 2-3 s configuration (server next to the models)
+
+`pipeline.server.yaml` + `.env.server.example`: on-prem gemma (vLLM) for pre-translation and
+moderation, TranslateGemma for post-translation, `PLANNER_CONCURRENT_MODERATION=true`
+(voice-style: the safety check overlaps the agent step, tokens are held until the verdict,
+side-effecting tools wait on it via `FarmerContext.ensure_in_scope`), farmer profile kept
+warm. Expected: TODAY ~2.5-3 s to first word, NEW ~1.7-2.2 s.
+
 ## 5. Running
 
 ### 5a. Laptop: real pipeline, stand-in network (no production credentials)

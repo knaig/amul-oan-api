@@ -1,7 +1,13 @@
+import os
 import sys
 from pathlib import Path
 
 import pytest
+
+# The suite pins the SEQUENTIAL moderation contract; a local lab .env may turn the
+# voice-style concurrent mode on. Environment beats .env, so pin it off here.
+os.environ.setdefault("PLANNER_CONCURRENT_MODERATION", "false")
+os.environ.setdefault("PLANNER_MODE", "llm")
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
