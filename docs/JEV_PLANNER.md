@@ -175,6 +175,17 @@ was 10/10 on tool set every time; Flow A 8/10 to 9/10. Agent-step TTFT medians m
 0.6 s in Flow B's favour per run; the tail (milk-records query, several Beckn round trips)
 is dominated by tool latency and hit either arm at random (5 to 26 s).
 
+**14-question run (adds insemination, soil card, union scheme, vet-office questions):** both
+flows 12/14 on tool set before two fixes. Flow A spent one turn calling
+`get_farmer_bonus_amount` 27 times in a row on "what insurance schemes does my union offer"
+(the union tool is hidden for that farmer's union, and `ModelSettings(request_limit=10)` in
+`agents/agrinet.py` is not a pydantic-ai loop bound, so nothing stopped it): 50 s to first
+token, ~400k input tokens, which pulled Flow A's average to 43.7k tokens and $0.089 per turn
+for the run versus Flow B's 7.5k + 5.7k Jev tokens and $0.017. Flow B answered the same
+question from document search in 2.8 s. Flow B's two misses (a health call planned on top of
+a vet-office lookup; searching instead of the union tool for a farmer whose union has no
+scheme catalogue) were fixed in the decoder / the sample set.
+
 Caveats: n=10 per run on a laptop over the public internet; tool latencies are stand-in
 constants; ratings not yet collected. Re-run `scripts/planner_eval.py` with a larger set and
 real backends before quoting numbers externally.

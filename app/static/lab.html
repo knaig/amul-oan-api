@@ -162,7 +162,7 @@ async function loadConfig(){
   $('checks').innerHTML = Object.entries(c.checks).map(([k,v]) => `<span class="badge ${v?'ok':'no'}">${k}</span>`).join('');
   $('tools').innerHTML = c.tools.map(t => `<label title="${t.description}"><input type="checkbox" data-tool="${t.name}" checked> ${t.name}</label>`).join('');
   $('sample').innerHTML = '<option value="">— pick a sample —</option>' + (c.samples||[]).map((s,i) => `<option value="${i}">${(s.expected_tools||[]).join('+') || 'no tool'} · ${s.query_en || s.query}</option>`).join('');
-  $('sample').onchange = () => { const s = (c.samples||[])[$('sample').value]; if (s) { $('query').value = s.query; $('source_lang').value = 'gu'; $('target_lang').value = 'gu'; } };
+  $('sample').onchange = () => { const s = (c.samples||[])[$('sample').value]; if (s) { $('query').value = s.query; $('source_lang').value = 'gu'; $('target_lang').value = 'gu'; if (s.mobile) $('mobile').value = s.mobile; } };
   $('model_profile').innerHTML = (c.profiles||[]).map(p => `<option value="${p.name}">${p.name} · ${p.agent_model||''}${p.weight?' (default)':''}</option>`).join('');
   for (const [k,v] of Object.entries(c.defaults)) { const el = $(k); if (el && el.type !== 'checkbox' && typeof v !== 'object') el.value = v; }
   $('dry_run').checked = true;

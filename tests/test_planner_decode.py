@@ -185,6 +185,12 @@ def test_ai_call_lists_technicians_then_books_on_selection():
     assert book.tool_names() == ["create_ai_call"] and book.tool_calls[0].args["user_id"] == "T2"
 
 
+def test_lookup_question_never_piggybacks_a_health_call():
+    plan, _ = plan_for("where is the nearest veterinary dispensary", base_answers(
+        intent=choice("services"), primary_tool=choice("find_nearby_vet_offices"), health_request=choice("explicit_booking_request", 0.7)))
+    assert plan.tool_names() == ["find_nearby_vet_offices"]
+
+
 def test_insemination_request_never_books_a_health_call():
     plan, _ = plan_for("My cow is in heat, book insemination", base_answers(
         intent=choice("breeding"), primary_tool=choice("create_ai_call"), ai_request=choice("asks_to_book_insemination"),

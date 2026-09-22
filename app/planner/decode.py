@@ -116,8 +116,10 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
     # ── Health call (rule 1 of booking routing; precedence over retrieval) ──
     health = a.choice("health_request", "none") if "create_health_call" in tools else "none"
     offered = a.yes("last_assistant_offered_health_call", yes) and a.yes("farmer_says_yes", yes)
+    booking_shaped_primary = primary in ("create_health_call", "none_answer_directly", "search_documents")
     health_wins = (
-        (health in ("explicit_booking_request", "confirms_earlier_offer") or offered or primary == "create_health_call")
+        (primary == "create_health_call"
+         or (booking_shaped_primary and (health in ("explicit_booking_request", "confirms_earlier_offer") or offered)))
         and (not ai_route or (primary == "create_health_call" and intent == "clinical"))
     )
     if health_wins:
