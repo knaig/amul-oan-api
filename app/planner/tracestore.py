@@ -160,7 +160,22 @@ async def stats() -> dict[str, Any]:
         sub = [r for r in rows if r.arm == arm and not r.error]
         ttft = [r.ttft_ms for r in sub if r.ttft_ms is not None]
         total = [r.total_ms for r in sub if r.total_ms is not None]
+        def _span(key):
+            vals = []
+            for r in sub:
+                try:
+                    st = json.loads(r.stages_json or "{}")
+                    if key == "agent_step":
+                        m = st.get("marks", {})
+                        if "agent_done" in m and "agent_start" in m:
+                            vals.append(m["agent_done"] - m["agent_start"])
+                    elif key in st.get("spans", {}):
+                        vals.append(st["spans"][key])
+                except Exception:
+                    pass
+            return _pct(vals, 50)
         out["arms"][arm] = {
+            "stage_p50": {"pretranslation": _span("pretranslation"), "moderation": _span("moderation"), "plan": _span("plan") if arm == "jev" else _span("model_request_1"), "agent_step": _span("agent_step")},
             "turns": len(sub),
             "errors": sum(1 for r in rows if r.arm == arm and r.error),
             "ttft_p50": _pct(ttft, 50), "ttft_p95": _pct(ttft, 95),

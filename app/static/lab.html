@@ -339,7 +339,12 @@ async function loadHistory(){
       + row('agent-step TTFT p50 (ms)', A.ttft_p50, B.ttft_p50, d(A.ttft_p50, B.ttft_p50), 'agent start → first token')
       + row('agent-step TTFT p95 (ms)', A.ttft_p95, B.ttft_p95, d(A.ttft_p95, B.ttft_p95))
       + row('total turn p50 (ms)', A.total_p50, B.total_p50, d(A.total_p50, B.total_p50), 'incl. pretranslation, moderation, translation')
-      + row('total turn p95 (ms)', A.total_p95, B.total_p95, d(A.total_p95, B.total_p95))
+      + row('total turn p95 (ms)', A.total_p95, B.total_p95, d(A.total_p95, B.total_p95), 'tail = milk-records round trips, no-card 20 s wait, Flow A tool loops')
+      + `<tr><td colspan="4" class="small muted" style="padding-top:6px">Where a turn's time goes (medians): the two rows below the agent step are identical work on both flows and are NOT affected by the planner.</td></tr>`
+      + row('  pre-translation gu→en p50 (ms)', A.stage_p50.pretranslation, B.stage_p50.pretranslation, '', 'LLM call, both flows')
+      + row('  moderation p50 (ms)', A.stage_p50.moderation, B.stage_p50.moderation, '', 'LLM call, both flows')
+      + row('  planning p50 (ms)', A.stage_p50.plan, B.stage_p50.plan, d(A.stage_p50.plan, B.stage_p50.plan), 'A: LLM request #1 · B: Jev wait on critical path (call overlaps moderation)')
+      + row('  agent step incl. full answer p50 (ms)', A.stage_p50.agent_step, B.stage_p50.agent_step, d(A.stage_p50.agent_step, B.stage_p50.agent_step), 'plan + tools + compose to last token')
       + row('generative model requests / turn', A.model_requests_avg, B.model_requests_avg, d(A.model_requests_avg, B.model_requests_avg))
       + row('turns escalated to Flow A planner', '—', B.escalated, '', 'Jev unsure / unavailable → legacy loop answered')
       + row('errors', A.errors, B.errors, '')
