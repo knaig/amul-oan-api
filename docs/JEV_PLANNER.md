@@ -212,6 +212,21 @@ moderation, TranslateGemma for post-translation, `PLANNER_CONCURRENT_MODERATION=
 side-effecting tools wait on it via `FarmerContext.ensure_in_scope`), farmer profile kept
 warm. Expected: TODAY ~2.5-3 s to first word, NEW ~1.7-2.2 s.
 
+### 4e. Latency work that came out of the lab (all behind flags, off in production by default)
+
+| change | flag | effect measured here |
+|---|---|---|
+| Safety check by Jev, as a Choice inside the plan request (LLM moderation as fallback when Jev is down; optional background LLM check logs agreement) | `PLANNER_MODERATION_SOURCE=jev`, `PLANNER_MODERATION_COMPARE` | one fewer model call on the Jev arm; verdicts agreed with the LLM on every logged turn so far; decline lines are fixed per category and localised downstream |
+| Safety check concurrent with the agent step, tokens held until the verdict (voice-style) | `PLANNER_CONCURRENT_MODERATION` | ~0.8 s off first word, both arms |
+| Answer translation pipelined with generation, batches in order, 3 in flight | `PLANNER_PIPELINED_TRANSLATION` | translate-answer time 3-4 s → 0.6-0.8 s, both arms |
+| Long HTTP keep-alive on the Jev and OpenAI clients + a 25 s Jev warm ping (~$0.000002 each) | automatic when a TypeSafe key is set and the planner is in play | Jev call after idle 1.3 s → ~0.6 s; fewer TLS handshakes to OpenAI |
+| Farmer profile pre-warmed per question in the lab (production prefetches at call start) | `/api/lab/warm` | removes a 4-5 s cold Beckn fan-out from the first turn |
+
+Not a win from this laptop: routing the two translations through gemini-2.5-flash-lite on
+OpenRouter (`fast` profile) was 1.2 s per call inside the real prompt vs 0.75-1.0 s for
+gpt-4.1-mini direct. The network floor from India is ~0.7 s per hosted call; on-prem models
+are the only way below it.
+
 ## 5. Running
 
 ### 5a. Laptop: real pipeline, stand-in network (no production credentials)
