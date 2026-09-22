@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import nullcontext
+from types import SimpleNamespace
 from typing import Any, AsyncGenerator
 from functools import lru_cache
 import regex
@@ -627,8 +628,12 @@ async def stream_chat_messages(
                     finally:
                         stages.end("moderation")
                     out = run.output
-                    out.rejected = out.category != "valid_agricultural"  # read by ensure_in_scope
-                    return out
+                    # Plain object: the pydantic result refuses new attributes, and
+                    # ensure_in_scope() reads `.rejected`.
+                    return SimpleNamespace(
+                        category=out.category, action=out.action,
+                        rejected=out.category != "valid_agricultural", text=str(out),
+                    )
 
                 _mod_task = asyncio.create_task(_moderate_concurrently())
                 deps.set_moderation_task(_mod_task)
@@ -957,13 +962,15 @@ async def stream_chat_messages(
                     decline_text = await localize_system_text(decline_text)
                     logger.info("request_id=%s moderation_blocked=True (concurrent) response_preview=%s", request_id, decline_text[:160])
                     _turn_outcome = "success"
+                    turn_sink["answer"] = decline_text
+                    turn_sink["stages"] = stages.snapshot()
                     yield decline_text
                     return
                 if _mod_task is not None:
                     # Verdict was 'allowed' (the gate let tokens through): finish the
                     # bookkeeping the sequential path did before the agent ran.
                     moderation_data = _mod_task.result()
-                    deps.update_moderation_str(str(moderation_data))
+                    deps.update_moderation_str(moderation_data.text)
                     if persona == "farmer":
                         try:
                             suggestions_cache_key = f"suggestions_{session_id}_{target_lang}"
@@ -1075,7 +1082,9 @@ async def stream_chat_messages(
             if _mod_task is not None and _mod_task.done() and _mod_task.exception() is not None and "first_client_token" not in stages.marks:
                 # Concurrent moderation itself failed before any token was shown: fail closed.
                 logger.error("request_id=%s moderation_error=%s (concurrent)", session_id_safe, _mod_task.exception())
-                yield await localize_system_text(GENERIC_UNAVAILABLE_MESSAGE_EN)
+                _fail_text = await localize_system_text(GENERIC_UNAVAILABLE_MESSAGE_EN)
+                turn_sink["answer"] = _fail_text
+                yield _fail_text
                 return
             raise
         except BaseException:
