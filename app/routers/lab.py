@@ -308,6 +308,23 @@ async def lab_plan_preview(req: PreviewRequest):
     }
 
 
+@router.post("/warm")
+async def lab_warm(body: dict):
+    """Pre-load the farmer profile into the Redis cache (production prefetches it at
+    call start; the lab should not charge a cold Beckn fan-out to the first turn)."""
+    _guard()
+    mobile = normalize_phone_to_mobile(str(body.get("mobile") or "")) if body.get("mobile") else None
+    if not mobile:
+        return {"warmed": False}
+    import time as _t
+    t0 = _t.monotonic()
+    try:
+        info, unions, loc = await get_farmer_context_bundle_by_mobile(mobile)
+        return {"warmed": True, "ms": round((_t.monotonic() - t0) * 1000), "unions": unions, "district": loc.get("district"), "chars": len(info)}
+    except Exception as exc:
+        return {"warmed": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
 @router.get("/traces")
 async def lab_traces(limit: int = 100, compare_group: Optional[str] = None):
     _guard()

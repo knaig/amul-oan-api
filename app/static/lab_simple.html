@@ -54,6 +54,7 @@
 <div class="tabs"><a class="on" href="./simple">Simple view</a><a href="./">Advanced dashboard</a></div>
 <main>
   <h1>One farmer question, two ways</h1>
+  <p class="sub" style="background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:8px 12px; color:#78350f; font-size:14px">Absolute times here are a laptop talking to OpenAI over the internet, with a stand-in for the Beckn network. Production runs models next to the data and prefetches the farmer profile once per call, so its clock is much shorter. What transfers is the <b>difference between the two lanes</b>: the grey, blue and purple steps are identical work in both ways.</p>
   <p class="sub">Today the assistant asks the language model twice: once to decide what data to fetch, once to write the answer. The new way asks <b>Jev</b> (a small, fast decision model) what to fetch, and the language model only writes. Same question, same data sources, same answer model. Watch the two timelines fill.</p>
 
   <div class="card">
@@ -77,11 +78,13 @@
     </div>
     <div class="axis"><span>0 s</span><span id="axis-mid"></span><span id="axis-end"></span></div>
     <div class="legend">
+      <span><i style="background:#cbd5e1"></i>load farmer profile</span>
       <span><i style="background:var(--c-translate)"></i>translate question to English</span>
       <span><i style="background:var(--c-safety)"></i>safety check</span>
       <span><i style="background:var(--c-plan)"></i>decide what data to fetch</span>
       <span><i style="background:var(--c-data)"></i>fetch data</span>
       <span><i style="background:var(--c-write)"></i>write the answer</span>
+      <span><i style="background:#fbbf24"></i>translate answer to Gujarati</span>
       <span>▍ first word reaches the farmer</span>
     </div>
   </div>
@@ -142,9 +145,11 @@ function segments(arm, d){
   const s = d.stages.spans, m = d.stages.marks, tools = d.tools || [];
   const toolMs = tools.length ? Math.max(...tools.map(t => t.ms || 0)) : 0;
   const seq = [
+    {k:'profile', label:'load farmer profile', ms:s.farmer_profile || 0, c:'#cbd5e1'},
     {k:'translate', label:'translate', ms:s.pretranslation || 0, c:'var(--c-translate)'},
     {k:'safety', label:'safety check', ms:s.moderation || 0, c:'var(--c-safety)'},
   ];
+  const tr = s.translate_answer || 0;
   if (arm === 'llm') {
     seq.push({k:'plan', label:'model decides data', ms:s.model_request_1 || 0, c:'var(--c-plan)'});
     if (toolMs) seq.push({k:'data', label:'fetch data', ms:toolMs, c:'var(--c-data)'});
@@ -155,6 +160,8 @@ function segments(arm, d){
     if (toolMs) seq.push({k:'data', label:'fetch data', ms:toolMs, c:'var(--c-data)'});
     seq.push({k:'write', label:'model writes answer', ms:s.compose || s.model_request_1 || 0, c:'var(--c-write)'});
   }
+  // The write bar contains the Gujarati translation of each answer batch; split it out.
+  const w = seq.filter(x => x.k === 'write'); if (tr && w.length) { const lastW = w[w.length-1]; lastW.ms = Math.max(0, lastW.ms - tr); seq.push({k:'trans_out', label:'translate answer to Gujarati', ms:tr, c:'#fbbf24'}); }
   return seq;
 }
 function drawTrack(id, seq, scale, firstWord, extra){
@@ -225,18 +232,23 @@ async function ask(idx, session){
   $('ans-a').textContent = ''; $('ans-b').textContent = ''; $('agree').textContent = '';
   ['track-a','track-b'].forEach(id => $(id).innerHTML = '<div class="seg" style="left:0;width:100%;background:#e2e8f0;color:var(--muted)">working…</div>');
   $('steps-a').innerHTML = ''; $('steps-b').innerHTML = '';
-  $('status').textContent = `Asking: “${item.en}” — both ways run at the same time…`;
   $('ask').disabled = true; $('all').disabled = true;
-  const t0 = performance.now(); const firstWord = {};
-  const r = await fetch(API + '/lab/turn', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({query:item.q, arms:['llm','jev'], session_id: session || ('simple-' + Math.random().toString(36).slice(2,8)), source_lang:'gu', target_lang:'gu', mobile:'9876543210', dry_run_side_effects:true})});
-  const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
-  while (true) { const {value, done} = await reader.read(); if (done) break; buf += dec.decode(value, {stream:true});
-    let i; while ((i = buf.indexOf('\n\n')) >= 0) { const raw = buf.slice(0, i); buf = buf.slice(i+2); const line = raw.split('\n').find(l => l.startsWith('data: ')); if (!line) continue; const e = JSON.parse(line.slice(6));
-      const el = e.arm === 'llm' ? 'ans-a' : 'ans-b';
-      if (e.type === 'token') { if (!firstWord[e.arm]) { firstWord[e.arm] = true; $('status').textContent = `${e.arm === 'llm' ? 'TODAY' : 'NEW'} way produced its first word at ${fmt(performance.now()-t0)} wall-clock…`; } $(el).textContent += e.text; }
-      if (e.type === 'done') { last[e.arm] = e; $(el).textContent = e.answer; }
-      if (e.type === 'error') { $(el).textContent = 'Error: ' + e.error; }
-    } }
+  $('status').textContent = 'Loading the farmer profile into cache (production does this once per call)…';
+  await fetch(API + '/lab/warm', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({mobile:'9876543210'})}).catch(() => {});
+  const sid = session || ('simple-' + Math.random().toString(36).slice(2,8));
+  // One flow at a time, so neither steals CPU or network from the other and each bar is exact.
+  for (const arm of ['llm','jev']) {
+    const el = arm === 'llm' ? 'ans-a' : 'ans-b'; const t0 = performance.now(); let first = false;
+    $('status').textContent = `${arm === 'llm' ? 'TODAY' : 'NEW'} way: “${item.en}”…`;
+    const r = await fetch(API + '/lab/turn', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({query:item.q, arms:[arm], session_id: sid, source_lang:'gu', target_lang:'gu', mobile:'9876543210', dry_run_side_effects:true})});
+    const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
+    while (true) { const {value, done} = await reader.read(); if (done) break; buf += dec.decode(value, {stream:true});
+      let i; while ((i = buf.indexOf('\n\n')) >= 0) { const raw = buf.slice(0, i); buf = buf.slice(i+2); const line = raw.split('\n').find(l => l.startsWith('data: ')); if (!line) continue; const e = JSON.parse(line.slice(6));
+        if (e.type === 'token') { if (!first) { first = true; $('status').textContent = `${arm === 'llm' ? 'TODAY' : 'NEW'} way: first word after ${fmt(performance.now()-t0)} (wall clock, incl. profile + translate + safety)…`; } $(el).textContent += e.text; }
+        if (e.type === 'done') { last[e.arm] = e; $(el).textContent = e.answer; }
+        if (e.type === 'error') { $(el).textContent = 'Error: ' + e.error; }
+      } }
+  }
   $('ask').disabled = false; $('all').disabled = false; $('status').textContent = 'Done. Hover any bar for its exact time.';
   render(); renderAnswers();
 }

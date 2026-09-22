@@ -491,6 +491,7 @@ async def stream_chat_messages(
             farmer_unions: list[str] = []
             farmer_location: dict[str, str] = {}
             if persona == "farmer" and user_info and user_info.get('phone'):
+                stages.start("farmer_profile")
                 try:
                     farmer_data, farmer_unions, farmer_location = await get_farmer_context_bundle_by_mobile(user_info['phone'])
                     logger.info(f"request_id={request_id} farmer_context_length={len(farmer_data)}")
@@ -498,6 +499,7 @@ async def stream_chat_messages(
                     logger.info("request_id=%s farmer_district=%s", request_id, farmer_location.get("district"))
                 except Exception as e:
                     logger.warning(f"request_id={request_id} farmer_context_fetch_failed={e}")
+                stages.end("farmer_profile")
 
             # Hindi and Bengali kill switches (HINDI_CHAT_ENABLED /
             # BENGALI_CHAT_ENABLED, default on). When disabled, that language drops
@@ -794,6 +796,14 @@ async def stream_chat_messages(
                         english_source_chunks.append(_c)
                         yield _c
 
+                async def _timed_translate(**kw):
+                    stages.start("translate_answer")
+                    try:
+                        async for _t in translate_text_stream_fast(**kw):
+                            yield _t
+                    finally:
+                        stages.end("translate_answer")
+
                 async def _stream_to_client(english_src):
                     english_src = _tap_english(english_src)
                     if needs_output_translation:
@@ -813,7 +823,7 @@ async def stream_chat_messages(
                                         translated_output_chunks.append("\n")
                                         yield "\n"
                                     try:
-                                        async for translated_chunk in translate_text_stream_fast(
+                                        async for translated_chunk in _timed_translate(
                                             text=batch_text,
                                             source_lang="english",
                                             target_lang=target_lang,
@@ -835,7 +845,7 @@ async def stream_chat_messages(
                                 translated_output_chunks.append("\n")
                                 yield "\n"
                             try:
-                                async for translated_chunk in translate_text_stream_fast(
+                                async for translated_chunk in _timed_translate(
                                     text=batch_text,
                                     source_lang="english",
                                     target_lang=target_lang,
@@ -853,7 +863,7 @@ async def stream_chat_messages(
                                 translated_output_chunks.append("\n")
                                 yield "\n"
                             try:
-                                async for translated_chunk in translate_text_stream_fast(
+                                async for translated_chunk in _timed_translate(
                                     text=sentence_buffer,
                                     source_lang="english",
                                     target_lang=target_lang,

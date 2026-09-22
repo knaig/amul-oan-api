@@ -211,7 +211,7 @@ function waterfall(a, d){
   const s = d.stages.spans, m = d.stages.marks, total = Math.max(d.stages.total_ms, 1);
   const color = a==='llm' ? 'var(--llm)' : 'var(--jev)';
   const rows = [];
-  const seq = ['pretranslation','moderation','plan','tools','compose','model_request_1','model_request_2','model_request_3'];
+  const seq = ['farmer_profile','pretranslation','moderation','plan','tools','compose','model_request_1','model_request_2','model_request_3','translate_answer'];
   let cursor = 0;
   for (const k of seq) { if (s[k]) rows.push([k, s[k]]); }
   // Sequential approximation: spans are laid end to end in pipeline order (they are sequential in the code).
