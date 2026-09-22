@@ -14,6 +14,8 @@ os.environ.setdefault("PLANNER_PIPELINED_TRANSLATION", "false")
 # The lab .env points PIPELINE_CONFIG_PATH at pipeline.lab.yaml; the suite pins the
 # env-synthesised pipeline (empty path = unset for runtime.configure()).
 os.environ.setdefault("PIPELINE_CONFIG_PATH", "")
+os.environ.setdefault("HEALTH_BREAKER_ENABLED", "true")
+os.environ.setdefault("HEALTH_POLLER_ENABLED", "true")
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
