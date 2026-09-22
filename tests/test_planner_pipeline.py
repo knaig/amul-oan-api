@@ -26,7 +26,7 @@ def _deps():
 def test_executor_dry_runs_side_effect_tools_without_network():
     plan = Plan(intent="services", tool_calls=[ToolCall("create_health_call", {"union_code": "1", "society_code": "2", "farmer_code": "3", "species": "cow", "case_type": "normal", "remark": "x"})])
     results = asyncio.run(executor.execute(plan, _deps(), PlannerSettings(dry_run_side_effects=True)))
-    assert results[0].dry_run and "[DRY RUN] create_health_call" in results[0].output
+    assert results[0].dry_run and "[TEST MODE] create_health_call" in results[0].output
 
 
 def test_executor_runs_search_in_parallel_and_surfaces_validator_rejections(monkeypatch):
@@ -221,6 +221,43 @@ def test_concurrent_moderation_rejection_emits_only_the_decline(monkeypatch):
     assert "legacy answer" not in out and "first_client_token" not in stages.marks
 
 
+def test_pipelined_translation_preserves_order_and_overlaps(monkeypatch):
+    import app.services.chat as cs
+    calls = []
+
+    async def _tr(text, *_a, **_k):
+        calls.append(("start", text)); await asyncio.sleep(0.05); calls.append(("end", text))
+        yield f"[{text.strip()}]"
+
+    monkeypatch.setattr(cs, "translate_text_stream_fast", _tr)
+    monkeypatch.setattr(cs, "should_translate_batch", lambda text, n: True)  # one batch per sentence
+    monkeypatch.setattr(cs, "propagate_attributes", None); monkeypatch.setattr(cs, "get_langfuse_client", None)
+    monkeypatch.setattr(cs, "cache", _Cache()); monkeypatch.setattr(cs, "trim_history", lambda *a, **k: []); monkeypatch.setattr(cs, "format_message_pairs", lambda *a, **k: "")
+
+    async def _pre(_tier, *, text, **_k):
+        return "en"
+
+    async def _mod(user_message, model=None):
+        return SimpleNamespace(output=SimpleNamespace(category="valid_agricultural", action="allow"))
+
+    async def _noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(cs, "pretranslate_with_tier", _pre); monkeypatch.setattr(cs.moderation_agent, "run", _mod)
+    monkeypatch.setattr(cs.agrinet_agent, "iter", lambda **_k: _Run(["One. ", "Two. ", "Three. ", "Four."]))
+    monkeypatch.setattr(cs, "update_message_history", _noop); monkeypatch.setattr(cs, "set_cache", _noop); monkeypatch.setattr(cs, "create_suggestions", lambda *a, **k: None)
+    stages = StageRecorder()
+
+    async def go():
+        return "".join([c async for c in cs.stream_chat_messages(query="q", session_id="pipe", source_lang="gu", target_lang="gu", channel="web", user_id="u", history=[], user_info={}, background_tasks=BackgroundTasks(), planner="llm", planner_overrides={"pipelined_translation": True}, stages=stages)])
+
+    out = asyncio.run(go())
+    assert out == "[One.][Two.][Three.][Four.]"  # order kept
+    starts = [i for i, c in enumerate(calls) if c[0] == "start"]; ends = [i for i, c in enumerate(calls) if c[0] == "end"]
+    assert starts[1] < ends[0] or starts[2] < ends[1]  # at least two translations overlapped
+    assert stages.meta.get("pipelined_translation") is True
+
+
 def test_dry_run_contextvar_stops_real_booking():
     from agents.tools.health_call import create_health_call
     from agents.tools.models.ai_call import AISpecies
@@ -231,7 +268,7 @@ def test_dry_run_contextvar_stops_real_booking():
         out = asyncio.run(create_health_call(SimpleNamespace(deps=_deps(), tool_call_id="t"), "1", "2", "3", AISpecies.COW, HealthCaseType.NORMAL, "r"))
     finally:
         DRY_RUN_SIDE_EFFECTS.reset(token)
-    assert out.startswith("[DRY RUN] create_health_call")
+    assert out.startswith("[TEST MODE] create_health_call")
 
 
 def test_planner_settings_merge_and_env(monkeypatch):

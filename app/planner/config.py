@@ -59,6 +59,9 @@ class PlannerSettings:
     # hold farmer-visible tokens until the verdict (side-effecting tools already
     # wait on it via FarmerContext.ensure_in_scope). Applies to BOTH arms.
     concurrent_moderation: bool = False
+    # Translate answer batches concurrently with generation (and with each other,
+    # in order) instead of stalling the model between batches.
+    pipelined_translation: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -88,6 +91,7 @@ class PlannerSettings:
             disabled_tools=disabled,
             history_pairs=_int("PLANNER_HISTORY_PAIRS", 3),
             concurrent_moderation=_bool("PLANNER_CONCURRENT_MODERATION", False),
+            pipelined_translation=_bool("PLANNER_PIPELINED_TRANSLATION", False),
         )
 
     def merged(self, overrides: Optional[dict]) -> "PlannerSettings":

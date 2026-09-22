@@ -42,6 +42,7 @@ from app.chat_artifacts import encode_chat_artifacts
 from app.planner import shadow as _planner_shadow, tracestore as _planner_trace
 from app.planner.arms import jev_agent_stream, legacy_tool_calls, start_plan_early
 from app.planner.gate import ModerationRejected, gated as _gate_until_verdict
+from app.planner.streaming import pipelined_translate as _pipelined_translate
 from app.planner.config import PlannerSettings, planner_override_enabled
 from app.planner.models import StageRecorder
 
@@ -835,8 +836,51 @@ async def stream_chat_messages(
                     finally:
                         stages.end("translate_answer")
 
+                async def _cut_batches(chunks):
+                    """The sequential path's sentence/batch rules, as a generator of batch strings."""
+                    sentence_buffer = ""
+                    translation_batch = []
+                    batch_word_count = 0
+                    async for chunk in chunks:
+                        sentence_buffer += chunk
+                        complete_sentences, remaining = extract_complete_sentences(sentence_buffer)
+                        if complete_sentences:
+                            for sentence in complete_sentences:
+                                translation_batch.append(sentence)
+                                batch_word_count += len(sentence.split())
+                            batch_text = "".join(translation_batch)
+                            if should_translate_batch(batch_text, batch_word_count):
+                                yield batch_text
+                                translation_batch = []
+                                batch_word_count = 0
+                            sentence_buffer = remaining
+                    tail = "".join(translation_batch) + sentence_buffer
+                    if tail.strip():
+                        yield tail
+
+                async def _translate_batch(batch_text):
+                    if translated_output_chunks and _batch_starts_new_line_or_list(batch_text):
+                        translated_output_chunks.append("\n")
+                        yield "\n"
+                    try:
+                        async for translated_chunk in _timed_translate(
+                            text=batch_text, source_lang="english", target_lang=target_lang,
+                            max_output_chars=deps.response_max_chars, execution=execution,
+                        ):
+                            translated_output_chunks.append(translated_chunk)
+                            yield translated_chunk
+                    except Exception as e:
+                        logger.error(f"Pipelined batch translation failed, falling back to English batch: {e}")
+                        translated_output_chunks.append(batch_text)
+                        yield batch_text
+
                 async def _stream_to_client(english_src):
                     english_src = _tap_english(english_src)
+                    if needs_output_translation and planner_settings.pipelined_translation:
+                        stages.meta["pipelined_translation"] = True
+                        async for out in _pipelined_translate(english_src, cut_batches=_cut_batches, translate=_translate_batch):
+                            yield out
+                        return
                     if needs_output_translation:
                         sentence_buffer = ""
                         translation_batch = []

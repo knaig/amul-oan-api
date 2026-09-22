@@ -15,6 +15,18 @@ profiles:
       suggestions:     {tiers: [{provider: openai, admission: managed, model: gpt-4.1-mini, api_key_env: OPENAI_API_KEY, timeout_ms: 20000, label: mini-suggestions}]}
       pre_translation: {tiers: [{provider: openai, admission: managed, model: gpt-4.1-mini, api_key_env: OPENAI_API_KEY, timeout_ms: 20000, label: mini-pretranslation}]}
 
+  - name: fast             # fast hosted models for the prep steps; gpt-4.1 still writes the answer
+    weight: 0
+    capabilities: {history_max_tokens: 80000}
+    steps:
+      agent:            {tiers: [{provider: openai, admission: managed, model: gpt-4.1,      api_key_env: OPENAI_API_KEY, timeout_ms: 60000, label: gpt41-agent}]}
+      moderation:       {tiers: [{provider: openai, admission: managed, model: gpt-4.1-mini, api_key_env: OPENAI_API_KEY, timeout_ms: 20000, label: mini-moderation}]}
+      suggestions:      {tiers: [{provider: openai, admission: managed, model: gpt-4.1-mini, api_key_env: OPENAI_API_KEY, timeout_ms: 20000, label: mini-suggestions}]}
+      pre_translation:  {tiers: [{provider: vllm, model: google/gemini-2.5-flash-lite, endpoint: https://openrouter.ai/api/v1, api_key_env: OPENROUTER_API_KEY, timeout_ms: 8000, label: flashlite-pretranslation},
+                                 {provider: openai, admission: managed, model: gpt-4.1-mini, api_key_env: OPENAI_API_KEY, timeout_ms: 20000, label: mini-pretranslation}]}
+      post_translation: {tiers: [{provider: vllm, model: google/gemini-2.5-flash-lite, endpoint: https://openrouter.ai/api/v1, api_key_env: OPENROUTER_API_KEY, timeout_ms: 20000, ttft_ms: 4000, label: flashlite-post-translation},
+                                 {provider: openai, admission: managed, model: gpt-4.1-mini, api_key_env: OPENAI_API_KEY, timeout_ms: 30000, label: mini-post-translation}]}
+
   - name: gpt41mini        # low-cost OpenAI
     weight: 0
     capabilities: {history_max_tokens: 80000}

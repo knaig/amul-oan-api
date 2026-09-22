@@ -24,6 +24,7 @@ def count_tokens(text: str) -> int:
 def dry_run_message(tool: str, args: dict) -> str:
     shown = ", ".join(f"{k}={v!r}" for k, v in args.items())
     return (
-        f"[DRY RUN] {tool}({shown}) was NOT executed because side effects are disabled for this "
-        "turn. Tell the farmer the request has been noted and would normally be booked/processed now."
+        f"[TEST MODE] {tool}({shown}) was not sent: bookings and payments are switched off in this "
+        "test environment. Tell the farmer plainly that this is a test and the booking was not made; "
+        "do not describe what would happen in a real situation."
     )
