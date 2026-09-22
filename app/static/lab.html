@@ -77,6 +77,10 @@
       <label>Conversation id <span class="muted">(same id = multi-turn; each arm keeps its own history)</span></label>
       <div class="row"><input type="text" id="session_id"><button class="btn secondary" id="newsession" style="flex:0 0 auto">New</button></div>
       <div class="row" style="margin-top:10px">
+        <button class="btn" id="demo" style="background:var(--jev)">▶ Run demo (9 turns, hands-off)</button>
+      </div>
+      <div id="demo-status" class="small muted" style="margin-top:4px"></div>
+      <div class="row" style="margin-top:6px">
         <button class="btn" id="send">Send message</button>
         <button class="btn rec" id="rec">● Start call (mic)</button>
       </div>
@@ -121,6 +125,7 @@
   <section>
     <div class="card" style="margin-bottom:12px"><h2>Persisted turns so far: Flow A vs Flow B</h2><table id="stats"></table></div>
     <div class="agree" id="agree"></div>
+    <div class="card" id="demo-card" style="display:none; margin-bottom:12px"><h2>Demo run: turn by turn</h2><table id="demo-table"></table></div>
     <div class="arms">
       <div class="card arm llm" id="arm-llm">
         <h3><span><span class="pill" style="background:#dbeafe;color:#1e3a8a">Flow A</span> LLM two-call (plan request + compose request)</span> <span class="badge" id="status-llm">idle</span></h3>
@@ -256,9 +261,47 @@ function handle(ev, done){
   if (ev.type==='audio') { const audio = new Audio('data:audio/wav;base64,' + ev.audio_base64); const btn = document.createElement('button'); btn.className='btn secondary'; btn.textContent = `▶ Play ${a} answer (TTS ${ev.tts_ms} ms)`; btn.onclick = () => audio.play(); $('rate-'+a).appendChild(btn); }
   if (ev.type==='end') { loadHistory(); }
 }
-$('send').onclick = async () => {
-  const done = {}; arms.forEach(resetArm); $('transcript').textContent=''; $('send').disabled = true;
-  try { await streamSSE(API + '/lab/turn', body(), ev => handle(ev, done)); } catch (e) { $('agree').innerHTML = `<span class="err">${e.message}</span>`; } finally { $('send').disabled = false; }
+async function runTurn(extra){
+  const done = {}; arms.forEach(resetArm); $('transcript').textContent=''; $('send').disabled = true; $('demo').disabled = true;
+  try { await streamSSE(API + '/lab/turn', body(extra), ev => handle(ev, done)); } catch (e) { $('agree').innerHTML = `<span class="err">${e.message}</span>`; } finally { $('send').disabled = false; $('demo').disabled = false; }
+  return done;
+}
+$('send').onclick = () => runTurn();
+
+// Hands-off demo: scripted turns through BOTH flows, then a per-turn summary.
+const DEMO = [
+  {q: 'મારી ભેંસ પડી ગઈ છે ડોક્ટર મોકલો', en: 'My buffalo has collapsed, send a doctor', tool: 'create_health_call'},
+  {q: 'મારું બોનસ કેટલું છે?', en: 'How much is my bonus?', tool: 'get_farmer_bonus_amount'},
+  {q: 'આજે જુનાગઢ માં ડુંગળી નો ભાવ શું છે', en: "Today's onion price in Junagadh", tool: 'get_vistaar_mandi_prices'},
+  {q: 'મારો સોઇલ હેલ્થ કાર્ડ બતાવો 2024-25', en: 'Show my soil health card 2024-25', tool: 'get_vistaar_soil_health_card'},
+  {q: 'મારા યુનિયનની વીમા યોજના કઈ છે', en: 'What insurance schemes does my union offer', tool: 'get_union_scheme_data', mobile: '9898989898'},
+  {q: 'મારી ગાય ને તાવ છે અને ખાતી નથી', en: 'My cow has fever and is not eating', tool: 'search_documents (then offer a health call)', session: 'fever'},
+  {q: 'હા, બુક કરો', en: 'Yes, book it', tool: 'create_health_call (confirmation, multi-turn)', session: 'fever'},
+  {q: 'મારી ગાય ગરમીમાં છે, બીજદાન બુક કરો', en: 'My cow is in heat, book insemination', tool: 'none: list technicians', session: 'ai'},
+  {q: 'મીના', en: 'Meena', tool: 'create_ai_call (technician pick, multi-turn)', session: 'ai'},
+];
+$('demo').onclick = async () => {
+  const runId = Math.random().toString(36).slice(2,7); const rows = [];
+  $('demo-card').style.display = ''; $('demo-table').innerHTML = '<tr><th>#</th><th>question (EN)</th><th>tool expected</th><th style="color:var(--llm)">Flow A tools</th><th style="color:var(--llm)">A TTFT</th><th style="color:var(--jev)">Flow B tools</th><th style="color:var(--jev)">B TTFT</th><th>B − A</th></tr>';
+  for (let i = 0; i < DEMO.length; i++) {
+    const t = DEMO[i];
+    $('demo-status').textContent = `demo ${runId}: turn ${i+1}/${DEMO.length} — ${t.en}`;
+    $('query').value = t.q; $('source_lang').value = 'gu'; $('target_lang').value = 'gu';
+    $('mobile').value = t.mobile || '9876543210';
+    $('session_id').value = t.session ? `demo-${runId}-${t.session}` : `demo-${runId}-${i}`;
+    const done = await runTurn();
+    const ttft = d => d && d.stages ? (d.stages.marks.first_client_token - d.stages.marks.agent_start) : null;
+    const tools = d => d && d.tools ? [...new Set(d.tools.map(x => x.name))].join(', ') || '—' : 'error';
+    const a = ttft(done.llm), b = ttft(done.jev); const dl = (a!=null && b!=null) ? b - a : null;
+    rows.push({i, t, a, b});
+    $('demo-table').innerHTML += `<tr><td>${i+1}</td><td>${t.en}</td><td class="small muted">${t.tool}</td><td><code>${tools(done.llm)}</code></td><td>${a!=null?Math.round(a)+' ms':'—'}</td><td><code>${tools(done.jev)}</code></td><td>${b!=null?Math.round(b)+' ms':'—'}</td><td style="color:${dl<0?'var(--jev)':'var(--bad)'}">${dl!=null?(dl>0?'+':'')+Math.round(dl)+' ms':''}</td></tr>`;
+    await new Promise(r => setTimeout(r, 400));
+  }
+  const ok = rows.filter(r => r.a!=null && r.b!=null); const med = xs => { const s=[...xs].sort((x,y)=>x-y); return s.length? s[Math.floor(s.length/2)] : null; };
+  const saved = med(ok.map(r => r.a - r.b));
+  $('demo-table').innerHTML += `<tr><td colspan="8"><b>Median agent-step TTFT saved by Flow B over ${ok.length} turns: ${saved!=null?Math.round(saved)+' ms':'—'}</b> · Flow B made one generative request per turn; Flow A made two or more. Full stats in the table above; per-turn detail in Recent turns.</td></tr>`;
+  $('demo-status').textContent = `demo ${runId} complete`;
+  loadHistory();
 };
 $('preview').onclick = async () => {
   resetArm('jev'); $('status-jev').textContent = 'planning…';
@@ -302,7 +345,7 @@ async function loadHistory(){
   $('history').querySelector('tbody').innerHTML = tr.map(r => `<tr><td class="small muted">${(r.ts||'').slice(5,19).replace('T',' ')}</td><td>${flow(r.arm)}</td><td title="${((r.answer_en||'') ? 'EN: ' + r.answer_en + '\n\n' : '') + (r.answer||'').replace(/"/g,'&quot;')}">${(r.query||'').slice(0,50)}${r.query_en && r.query_en!==r.query ? `<br><span class="muted">${r.query_en.slice(0,60)}</span>` : ''}</td><td>${r.intent||''}</td><td>${(r.tools_json||[]).map(t=>t.name).join(', ')}</td><td>${r.ttft_ms!=null?Math.round(r.ttft_ms):''}</td><td>${r.total_ms!=null?Math.round(r.total_ms):''}</td><td>${r.jev_ms!=null?Math.round(r.jev_ms):''}</td><td>${r.model_requests??''}</td><td>${r.escalated?'yes':''}</td><td>${r.rating||''}${r.agreement?` <span class="pill">${r.agreement}</span>`:''}</td></tr>`).join('');
 }
 $('refresh').onclick = loadHistory;
-loadConfig().then(loadHistory);
+loadConfig().then(loadHistory).then(() => { if (!$('mobile').value) $('mobile').value = '9876543210'; });
 </script>
 </body>
 </html>
