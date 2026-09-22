@@ -23,6 +23,10 @@ class ChatRequest(BaseChatRequest):
         None,
         description="Test-only persona override; honored only when CHAT_PERSONA_OVERRIDE_ENABLED=true",
     )
+    planner: Optional[Literal['llm', 'jev']] = Field(
+        None,
+        description="Agent-step planner for this turn: 'llm' (two model requests) or 'jev' (TypeSafe plan + one compose request). Defaults to PLANNER_MODE. Honored when PLANNER_OVERRIDE_ENABLED=true.",
+    )
 
 
 class VoiceRequest(BaseChatRequest):

@@ -5,6 +5,15 @@ from agents.tools.registry import TOOLS
 from agents.tools.terms import get_ambiguity_hints_for_query
 from pydantic_ai.settings import ModelSettings
 from agents.deps import FarmerContext
+from app.planner.side_effects import DISABLED_TOOLS
+
+
+async def _drop_disabled_tools(ctx: RunContext, tool_defs):
+    """Per-request tool filter (contextvar); identity when nothing is disabled."""
+    disabled = DISABLED_TOOLS.get()
+    if not disabled:
+        return tool_defs
+    return [t for t in tool_defs if t.name not in disabled]
 
 
 def _agrinet_max_output_tokens() -> int:
@@ -31,6 +40,7 @@ agrinet_agent = Agent(
     deps_type=FarmerContext,
     retries=5,
     tools=TOOLS,
+    prepare_tools=_drop_disabled_tools,
     end_strategy='exhaustive',
     model_settings=ModelSettings(
         max_tokens=_agrinet_max_output_tokens(),

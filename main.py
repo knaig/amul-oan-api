@@ -16,7 +16,7 @@ from app.tasks.health_poller import start_health_poller, stop_health_poller
 import app.observability  # noqa: F401, E402
 
 # Import all routers
-from app.routers import chat, transcribe, suggestions, tts, health, auth, user, telemetry, beckn
+from app.routers import chat, transcribe, suggestions, tts, health, auth, user, telemetry, beckn, lab
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -108,6 +108,8 @@ app.include_router(tts.router, prefix=settings.api_prefix)
 app.include_router(user.router, prefix=settings.api_prefix)
 app.include_router(health.router, prefix=settings.api_prefix)
 app.include_router(beckn.router, prefix=settings.api_prefix)
+# Planner lab: side-by-side LLM-vs-Jev agent step (dev/staging only; see PLANNER_LAB_ENABLED).
+app.include_router(lab.router, prefix=settings.api_prefix)
 # Keep telemetry path compatible with existing frontend calls:
 # /observability-service/action/data/v3/telemetry
 app.include_router(telemetry.router)

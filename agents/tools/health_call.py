@@ -47,6 +47,9 @@ async def create_health_call(
     """
     # Per-session id for the atomic booking reservation (placed just before the
     # write call below).
+    from app.planner.side_effects import DRY_RUN_SIDE_EFFECTS, dry_run_message
+    if DRY_RUN_SIDE_EFFECTS.get():
+        return dry_run_message("create_health_call", {"union_code": union_code, "society_code": society_code, "farmer_code": farmer_code, "species": species.value, "case_type": case_type.value, "remark": remark})
     session_id = ctx.deps.session_id if ctx and ctx.deps else None
     tool_call_id = getattr(ctx, "tool_call_id", None)
     logger.info(

@@ -5,6 +5,7 @@ import re
 from pydantic_ai import ModelRetry
 
 from agents.tools.beckn.network import network_search_documents
+from app.planner.side_effects import SEARCH_TOP_K_OVERRIDE
 from helpers.utils import get_logger
 
 logger = get_logger(__name__)
@@ -93,6 +94,7 @@ async def search_documents(query: str, top_k: int = 8) -> str:
     Returns:
         Formatted document results from the Beckn provider.
     """
+    top_k = SEARCH_TOP_K_OVERRIDE.get() or top_k
     try:
         normalized = _expand_veterinary_synonyms(_validate_search_query(query))
         logger.info("Veterinary document search via Beckn query=%s", normalized)

@@ -1,0 +1,49 @@
+# Planner-lab pipeline: several named model profiles, selectable per turn from
+# the lab UI (`model_profile`). Only `gpt41` carries weight, so production-style
+# hashing still lands every session on the baseline unless the lab overrides it.
+# Post-translation goes straight to a managed model here (no TranslateGemma box
+# on a laptop) so output translation adds the same cost to both arms.
+fallback_enabled: true
+
+profiles:
+  - name: gpt41            # production baseline (agent prompt tuned for it)
+    weight: 100
+    capabilities: {history_max_tokens: 80000}
+    steps:
+      agent:           {tiers: [{provider: openai, admission: managed, model: gpt-4.1,      api_key_env: OPENAI_API_KEY, timeout_ms: 60000, label: gpt41-agent}]}
+      moderation:      {tiers: [{provider: openai, admission: managed, model: gpt-4.1,      api_key_env: OPENAI_API_KEY, timeout_ms: 20000, label: gpt41-moderation}]}
+      suggestions:     {tiers: [{provider: openai, admission: managed, model: gpt-4.1-mini, api_key_env: OPENAI_API_KEY, timeout_ms: 20000, label: mini-suggestions}]}
+      pre_translation: {tiers: [{provider: openai, admission: managed, model: gpt-4.1-mini, api_key_env: OPENAI_API_KEY, timeout_ms: 20000, label: mini-pretranslation}]}
+
+  - name: gpt41mini        # low-cost OpenAI
+    weight: 0
+    capabilities: {history_max_tokens: 80000}
+    steps:
+      agent:           {tiers: [{provider: openai, admission: managed, model: gpt-4.1-mini, api_key_env: OPENAI_API_KEY, timeout_ms: 60000, label: mini-agent}]}
+      moderation:      {tiers: [{provider: openai, admission: managed, model: gpt-4.1-mini, api_key_env: OPENAI_API_KEY, timeout_ms: 20000, label: mini-moderation}]}
+      suggestions:     {tiers: [{provider: openai, admission: managed, model: gpt-4.1-mini, api_key_env: OPENAI_API_KEY, timeout_ms: 20000, label: mini-suggestions}]}
+      pre_translation: {tiers: [{provider: openai, admission: managed, model: gpt-4.1-mini, api_key_env: OPENAI_API_KEY, timeout_ms: 20000, label: mini-pretranslation}]}
+
+  - name: gemini_flash     # low-cost Google
+    weight: 0
+    capabilities: {history_max_tokens: 80000}
+    steps:
+      agent:           {tiers: [{provider: gemini, admission: managed, model: gemini-2.5-flash, api_key_env: GEMINI_API_KEY, timeout_ms: 60000, label: flash-agent}]}
+      moderation:      {tiers: [{provider: gemini, admission: managed, model: gemini-2.5-flash, api_key_env: GEMINI_API_KEY, timeout_ms: 20000, label: flash-moderation}]}
+      suggestions:     {tiers: [{provider: gemini, admission: managed, model: gemini-2.5-flash, api_key_env: GEMINI_API_KEY, timeout_ms: 20000, label: flash-suggestions}]}
+      pre_translation: {tiers: [{provider: openai, admission: managed, model: gpt-4.1-mini,     api_key_env: OPENAI_API_KEY, timeout_ms: 20000, label: mini-pretranslation}]}
+
+  - name: openrouter_cheap # any OpenAI-compatible model via OpenRouter (edit `model`)
+    weight: 0
+    capabilities: {history_max_tokens: 80000}
+    steps:
+      agent:           {tiers: [{provider: vllm, model: openai/gpt-4.1-mini, endpoint: https://openrouter.ai/api/v1, api_key_env: OPENROUTER_API_KEY, timeout_ms: 60000, label: openrouter-agent},
+                                {provider: openai, admission: managed, model: gpt-4.1, api_key_env: OPENAI_API_KEY, timeout_ms: 60000, label: managed-fallback}]}
+      moderation:      {tiers: [{provider: vllm, model: openai/gpt-4.1-mini, endpoint: https://openrouter.ai/api/v1, api_key_env: OPENROUTER_API_KEY, timeout_ms: 20000, label: openrouter-moderation}]}
+      suggestions:     {tiers: [{provider: vllm, model: openai/gpt-4.1-mini, endpoint: https://openrouter.ai/api/v1, api_key_env: OPENROUTER_API_KEY, timeout_ms: 20000, label: openrouter-suggestions}]}
+      pre_translation: {tiers: [{provider: openai, admission: managed, model: gpt-4.1-mini, api_key_env: OPENAI_API_KEY, timeout_ms: 20000, label: mini-pretranslation}]}
+
+defaults:
+  post_translation:
+    tiers:
+      - {provider: openai, admission: managed, model: gpt-4.1-mini, api_key_env: OPENAI_API_KEY, timeout_ms: 30000, label: mini-post-translation}

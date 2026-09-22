@@ -178,6 +178,9 @@ async def create_ai_call(
         str: Formatted result with assigned AIT details and ticket number,
              or a message if booking fails.
     """
+    from app.planner.side_effects import DRY_RUN_SIDE_EFFECTS, dry_run_message
+    if DRY_RUN_SIDE_EFFECTS.get():
+        return dry_run_message("create_ai_call", {"union_code": union_code, "society_code": society_code, "farmer_code": farmer_code, "user_id": user_id, "species": species.value})
     session_id = ctx.deps.session_id if ctx and ctx.deps else None
     tool_call_id = getattr(ctx, "tool_call_id", None)
     logger.info(

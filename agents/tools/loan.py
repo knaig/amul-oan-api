@@ -130,6 +130,9 @@ async def check_loan_eligibility(ctx: RunContext[FarmerContext], confirmed: bool
         confirmed: Set true ONLY after the farmer has explicitly agreed to avail the
             loan (their yes to the offer). Leave false for the initial eligibility/offer.
     """
+    from app.planner.side_effects import DRY_RUN_SIDE_EFFECTS, dry_run_message
+    if DRY_RUN_SIDE_EFFECTS.get():
+        return dry_run_message("check_loan_eligibility", {"confirmed": confirmed})
     accounts = await _resolve_accounts(ctx)
     name: Optional[str] = None
     for acct in accounts:

@@ -37,6 +37,10 @@ from app.services.identity_profile import (
 )
 from app.personas import ChatPersona
 from app.chat_artifacts import encode_chat_artifacts
+from app.planner import shadow as _planner_shadow, tracestore as _planner_trace
+from app.planner.arms import jev_agent_stream, legacy_tool_calls, start_plan_early
+from app.planner.config import PlannerSettings, planner_override_enabled
+from app.planner.models import StageRecorder
 
 
 class SentenceSegmenter:
@@ -239,9 +243,31 @@ async def stream_chat_messages(
     history_session_id: str | None = None,
     artifact_sink: list[dict[str, Any]] | None = None,
     emit_artifact_frames: bool = True,
+    planner: str | None = None,
+    planner_overrides: dict[str, Any] | None = None,
+    stages: StageRecorder | None = None,
+    turn_sink: dict[str, Any] | None = None,
+    compare_group: str | None = None,
+    model_profile: str | None = None,
 ) -> AsyncGenerator[str, None]:
-    """Async generator for streaming chat messages."""
-    execution = await llm_core.context(session_id)
+    """Async generator for streaming chat messages.
+
+    ``planner`` selects the agent-step arm for this turn ('llm' | 'jev'); default is
+    PLANNER_MODE. ``stages`` / ``turn_sink`` are optional observability hooks used
+    by the planner lab; ``compare_group`` ties the arms of one comparison together.
+    """
+    execution = await llm_core.context(session_id, profile_name=model_profile)
+    planner_settings = PlannerSettings.from_env().merged(planner_overrides)
+    arm = planner if (planner in ("llm", "jev") and planner_override_enabled()) else (
+        "jev" if planner_settings.mode == "jev" else "llm"
+    )
+    shadow_enabled = planner_settings.mode == "shadow" and arm == "llm"
+    stages = stages if stages is not None else StageRecorder()
+    stages.meta.setdefault("arm", arm)
+    stages.meta.setdefault("model_profile", execution.profile_name)
+    stages.meta.setdefault("agent_model", execution.info(_LlmStep.AGENT).model_name)
+    turn_sink = turn_sink if turn_sink is not None else {}
+    _shadow_task = None
     pipeline_profile = execution.profile_name
     active_agent = doctor_agent if persona == "doctor" else agrinet_agent
     active_moderation_agent = doctor_moderation_agent if persona == "doctor" else moderation_agent
@@ -503,6 +529,7 @@ async def stream_chat_messages(
                     pretrans_info.provider,
                     pretrans_info.model_name,
                 )
+                stages.start("pretranslation")
                 try:
                     processing_query = await execution.run_adapter(
                         _LlmStep.PRE_TRANSLATION,
@@ -528,6 +555,7 @@ async def stream_chat_messages(
                     )
                     processing_query = query
                     processing_lang = target_lang
+                stages.end("pretranslation")
             if needs_output_translation:
                 # Agent responds in English; response will be translated to target_lang downstream
                 processing_lang = "en"
@@ -557,6 +585,23 @@ async def stream_chat_messages(
 
             message_pairs = "\n\n".join(format_message_pairs(history, 3))
             logger.info(f"Message pairs: {message_pairs}")
+
+            if arm == "jev":
+                # The plan only reads state, so it can overlap the moderation
+                # request. Tools run after moderation passes, exactly as before.
+                try:
+                    if persona == "farmer":
+                        deps.soil_health_card_context = (await get_session_shc_context(session_id, loan_mobile)) or ""
+                    _early_history = trim_history(
+                        history,
+                        max_tokens=execution.capabilities.history_max_tokens,
+                        include_system_prompts=False,
+                        include_tool_calls=False,
+                    )
+                    turn_sink["plan_task"] = start_plan_early(deps, _early_history, planner_settings, query)
+                    stages.mark("plan_started")
+                except Exception as _pe:  # planning must never break the turn; the arm plans inline instead
+                    logger.debug("early plan not started: %s", _pe)
             if message_pairs:
                 last_response = f"**Conversation**\n\n{message_pairs}\n\n---\n\n"
             else:
@@ -585,11 +630,13 @@ async def stream_chat_messages(
                     else nullcontext()
                 )
                 with _mod_obs_ctx as mod_obs:
+                    stages.start("moderation")
                     moderation_run = await execution.run(
                         _LlmStep.MODERATION,
                         active_moderation_agent,
                         user_message,
                     )
+                    stages.end("moderation")
                     moderation_data = moderation_run.output
                     logger.info(
                         "request_id=%s moderation_category=%s moderation_action=%s",
@@ -644,6 +691,9 @@ async def stream_chat_messages(
                         # supposed to. Recording "error" here inflated the error rate
                         # by one row per moderated query.
                         _turn_outcome = "success"
+                        _pt = turn_sink.pop("plan_task", None)
+                        if _pt is not None:
+                            _pt.cancel()
                         yield decline_text
                         return
                     deps.update_moderation_str(str(moderation_data))
@@ -666,6 +716,9 @@ async def stream_chat_messages(
                         langfuse.set_current_trace_io(output=fail_closed_message)
                     except Exception as e:
                         logger.warning("Langfuse: failed to record fail-closed output: %s", e)
+                _pt = turn_sink.pop("plan_task", None)
+                if _pt is not None:
+                    _pt.cancel()
                 yield fail_closed_message
                 return
 
@@ -809,13 +862,34 @@ async def stream_chat_messages(
                             raw_output_chunks.append(chunk)
                             yield chunk
 
-                english_src = execution.stream(
-                    active_agent,
-                    user_message,
-                    message_history=trimmed_history,
-                    deps=deps,
-                    new_messages=new_messages,
-                )
+                stages.mark("agent_start")
+                if arm == "jev":
+                    english_src = jev_agent_stream(
+                        deps=deps,
+                        user_message=user_message,
+                        history=trimmed_history,
+                        execution=execution,
+                        new_messages=new_messages,
+                        legacy_agent=active_agent,
+                        settings=planner_settings,
+                        stages=stages,
+                        sink=turn_sink,
+                        original_query=query,
+                    )
+                else:
+                    if shadow_enabled:
+                        try:
+                            _shadow_task = _planner_shadow.start(deps, trimmed_history, planner_settings, query)
+                        except Exception as _sh_exc:  # tracing-only
+                            logger.debug("shadow planner not started: %s", _sh_exc)
+                    english_src = execution.stream(
+                        active_agent,
+                        user_message,
+                        message_history=trimmed_history,
+                        deps=deps,
+                        new_messages=new_messages,
+                        observer=stages,
+                    )
 
                 if persona == "doctor":
                     english_src = _sanitize_doctor_stream(english_src)
@@ -827,7 +901,9 @@ async def stream_chat_messages(
                     client_src = _sanitize_doctor_stream(client_src)
 
                 async for _out in client_src:
+                    stages.mark("first_client_token")
                     yield _out
+                stages.mark("agent_done")
                 logger.info(f"Streaming complete for session {session_id}")
 
                 # Record trace output: translated response for translation pipeline, raw agent output otherwise.
@@ -888,6 +964,39 @@ async def stream_chat_messages(
             logger.info(f"Updating message history for session {session_id} with {len(messages)} messages")
             await update_message_history(message_history_session_id, messages)
             _turn_outcome = "success"
+
+            # Side-by-side observability (best effort, never breaks the turn).
+            try:
+                final_text = "".join(translated_output_chunks) if needs_output_translation and translated_output_chunks else "".join(raw_output_chunks)
+                turn_sink["answer"] = final_text
+                turn_sink["stages"] = stages.snapshot()
+                if arm == "llm":
+                    turn_sink["tools"] = stages.tools or legacy_tool_calls(new_messages)
+                else:
+                    turn_sink["tools"] = stages.tools
+                _base = dict(
+                    compare_group=compare_group, session_id=session_id_safe, persona=persona,
+                    channel=(channel or "web"), source_lang=source_lang, target_lang=target_lang, query=query,
+                )
+                _marks = stages.marks
+                _ttft = (_marks.get("first_client_token", 0) - _marks.get("agent_start", 0)) if "first_client_token" in _marks else None
+                _plan = turn_sink.get("plan")
+                if turn_sink.get("persist", True) and (arm == "jev" or compare_group or shadow_enabled):
+                    turn_sink["trace_id"] = await _planner_trace.record(
+                        **_base, arm=arm, answer=final_text,
+                        intent=getattr(_plan, "intent", None),
+                        tools_json=turn_sink["tools"],
+                        plan_json={"answers": getattr(_plan, "answers", None), "notes": getattr(_plan, "compose_notes", None), "confidence": getattr(_plan, "confidence", None)} if _plan else None,
+                        stages_json=turn_sink["stages"],
+                        ttft_ms=_ttft, total_ms=stages.elapsed_ms(),
+                        jev_ms=getattr(_plan, "jev_ms", None), jev_input_tokens=getattr(_plan, "jev_input_tokens", None),
+                        model_requests=stages.meta.get("model_requests"),
+                        escalated=int(bool(stages.meta.get("escalated"))),
+                    )
+                if _shadow_task is not None:
+                    background_tasks.add_task(_planner_shadow.finish, _shadow_task, new_messages=new_messages, base=_base)
+            except Exception as _trace_exc:
+                logger.debug("planner trace skipped: %s", _trace_exc)
         except GeneratorExit:
             # Client hung up mid-stream. Re-raised so generator teardown is normal.
             _turn_outcome = "cancelled"

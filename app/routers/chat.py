@@ -52,6 +52,7 @@ async def chat_endpoint(
         history_session_id=history_session_id,
         artifact_sink=artifacts,
         emit_artifact_frames=request.stream is not False,
+        planner=request.planner,
     )
 
     if request.stream is False:

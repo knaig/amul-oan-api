@@ -74,6 +74,18 @@ except Exception:  # pragma: no cover
 
 # ── httpx boundary-capture (adopted from voice) ───────────────────────────────
 async def _capture_request_hook(request: httpx.Request) -> None:
+    # Agent-step input-token estimate for the planner lab: count the exact body
+    # (messages + tool schemas) sent to the provider. Tracing only.
+    try:
+        from app.planner.side_effects import TOKEN_SINK, count_tokens
+        sink = TOKEN_SINK.get()
+        if sink is not None and request.url.path.endswith("/chat/completions") and request.content:
+            body = json.loads(request.content.decode("utf-8"))
+            n = count_tokens(json.dumps(body.get("messages", []), ensure_ascii=False)) + count_tokens(json.dumps(body.get("tools", []), ensure_ascii=False))
+            sink.meta["gen_input_tokens_est"] = sink.meta.get("gen_input_tokens_est", 0) + n
+            sink.meta["gen_requests"] = sink.meta.get("gen_requests", 0) + 1
+    except Exception:  # pragma: no cover - tracing only
+        pass
     if not boundary_capture_enabled():
         return
     try:

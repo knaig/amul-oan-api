@@ -806,11 +806,21 @@ class ExecutionContext:
         message_history: list,
         deps: Any,
         new_messages: list,
+        observer: Any = None,
     ) -> AsyncIterator[str]:
-        """Stream Agent text, committing on its first model activity event."""
+        """Stream Agent text, committing on its first model activity event.
+
+        ``observer`` (optional, tracing-only): an ``app.planner.models.StageRecorder``.
+        When present, each model request and each tool call is timed onto it. The
+        agent loop itself is unchanged."""
 
         async def raw(tier: ExecutionTarget) -> AsyncIterator[Any]:
             activity_signaled = False
+            model_requests = 0
+            open_tools: dict[str, tuple[str, Any, float]] = {}
+            out_chars: list[str] = []
+            from app.planner.side_effects import TOKEN_SINK, count_tokens
+            _tok = TOKEN_SINK.set(observer) if observer is not None else None
             async with agent.iter(
                 user_prompt=prompt,
                 message_history=message_history,
@@ -818,30 +828,83 @@ class ExecutionContext:
                 model=tier.handle,
             ) as agent_run:
                 async for node in agent_run:
-                    if type(node).__name__ != "ModelRequestNode":
+                    node_kind = type(node).__name__
+                    if observer is not None and node_kind == "CallToolsNode":
+                        async with node.stream(agent_run.ctx) as tool_stream:
+                            async for tev in tool_stream:
+                                tkind = type(tev).__name__
+                                if tkind == "FunctionToolCallEvent":
+                                    _args = tev.part.args_as_dict() if hasattr(tev.part, "args_as_dict") else tev.part.args
+                                    out_chars.append(f"{tev.part.tool_name}({_args})")
+                                    open_tools[tev.part.tool_call_id] = (tev.part.tool_name, _args, time.monotonic())
+                                elif tkind == "FunctionToolResultEvent":
+                                    started = open_tools.pop(getattr(tev.result, "tool_call_id", ""), None)
+                                    if started is not None:
+                                        name, args, t0 = started
+                                        observer.tool(name, args, (time.monotonic() - t0) * 1000.0,
+                                                      ok=type(tev.result).__name__ != "RetryPromptPart",
+                                                      output_preview=str(getattr(tev.result, "content", ""))[:400])
                         continue
+                    if node_kind != "ModelRequestNode":
+                        continue
+                    model_requests += 1
+                    if observer is not None:
+                        observer.meta["model_requests"] = model_requests
+                        observer.start(f"model_request_{model_requests}")
                     async with node.stream(agent_run.ctx) as request_stream:
                         async for event in request_stream:
                             if not activity_signaled:
                                 activity_signaled = True
+                                if observer is not None:
+                                    observer.mark("agent_first_event")
                                 yield AGENT_ACTIVITY
                             event_type = type(event).__name__
                             if event_type == "PartStartEvent" and type(event.part).__name__ == "TextPart":
                                 if event.part.content:
+                                    out_chars.append(event.part.content)
                                     yield event.part.content
                             elif event_type == "PartDeltaEvent" and type(event.delta).__name__ == "TextPartDelta":
                                 if event.delta.content_delta:
+                                    out_chars.append(event.delta.content_delta)
                                     yield event.delta.content_delta
+                    if observer is not None:
+                        observer.end(f"model_request_{model_requests}")
                 new_messages.extend(agent_run.result.new_messages())
+                if observer is not None:
+                    try:
+                        # Per-response usage is what the provider reported on each
+                        # streamed request; the run-level aggregate can lag in streaming.
+                        _in = _out = 0
+                        for _m in agent_run.result.new_messages():
+                            _u = getattr(_m, "usage", None)
+                            if _u is not None:
+                                _in += int(getattr(_u, "input_tokens", 0) or 0)
+                                _out += int(getattr(_u, "output_tokens", 0) or 0)
+                        if not _in:
+                            _u = agent_run.result.usage()
+                            _in, _out = int(getattr(_u, "input_tokens", 0) or 0), int(getattr(_u, "output_tokens", 0) or 0)
+                        observer.meta["gen_input_tokens"] = observer.meta.get("gen_input_tokens", 0) + _in
+                        observer.meta["gen_output_tokens"] = observer.meta.get("gen_output_tokens", 0) + _out
+                        observer.meta["gen_output_tokens_est"] = observer.meta.get("gen_output_tokens_est", 0) + count_tokens("".join(out_chars))
+                    except Exception:  # tracing only
+                        pass
+                    finally:
+                        if _tok is not None:
+                            TOKEN_SINK.reset(_tok)
 
         async for chunk in self.stream_adapter(Step.AGENT, raw):
             yield chunk
 
 
-async def context(session_id: str) -> ExecutionContext:
-    """Snapshot current config and resolve the session profile exactly once."""
+async def context(session_id: str, profile_name: Optional[str] = None) -> ExecutionContext:
+    """Snapshot current config and resolve the session profile exactly once.
+
+    ``profile_name`` forces a named profile (planner lab: compare models side by
+    side). Unknown names fall back to the weighted split, never raise."""
     from app.llm_core import runtime, split
 
     config = runtime.get_pipeline()
+    if profile_name and config.by_name(profile_name) is not None:
+        return ExecutionContext(session_id=session_id, config=config, profile_name=profile_name)
     profile_name = await split.resolve_profile(session_id, config)
     return ExecutionContext(session_id=session_id, config=config, profile_name=profile_name)

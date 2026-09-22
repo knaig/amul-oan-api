@@ -195,3 +195,8 @@ cython_debug/
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+# Jev planner lab trace store (SQLite default)
+planner_traces.db*
+.lab/
+dump.rdb

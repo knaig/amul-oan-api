@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Planner Lab</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --muted:#6b7280; --line:#e5e7eb; --llm:#2563eb; --jev:#059669; --warn:#b45309; --bad:#b91c1c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 -apple-system, Segoe UI, Roboto, sans-serif; color:var(--ink); background:var(--bg); }
+  header { display:flex; align-items:center; gap:16px; padding:12px 20px; background:#fff; border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
+  header h1 { font-size:16px; margin:0; }
+  .badge { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); background:#f3f4f6; }
+  .badge.ok { background:#ecfdf5; color:#065f46; border-color:#a7f3d0; }
+  .badge.no { background:#fef2f2; color:#991b1b; border-color:#fecaca; }
+  main { display:grid; grid-template-columns: 340px 1fr; gap:16px; padding:16px 20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 10px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:8px 0 3px; }
+  input[type=text], input[type=number], select, textarea { width:100%; padding:7px 9px; border:1px solid var(--line); border-radius:7px; font:inherit; background:#fff; }
+  textarea { min-height:70px; resize:vertical; }
+  .row { display:flex; gap:8px; } .row > * { flex:1; }
+  .btn { padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:#111827; color:#fff; font:inherit; cursor:pointer; }
+  .btn.secondary { background:#fff; color:var(--ink); } .btn.rec { background:var(--bad); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .tools { display:grid; grid-template-columns:1fr 1fr; gap:4px 8px; font-size:12px; }
+  .tools label { display:flex; gap:6px; align-items:center; margin:0; color:var(--ink); }
+  .arms { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .arm { border-top:4px solid var(--line); }
+  .arm.llm { border-top-color:var(--llm); } .arm.jev { border-top-color:var(--jev); }
+  .arm h3 { margin:0 0 6px; font-size:14px; display:flex; justify-content:space-between; align-items:center; }
+  .answer { white-space:pre-wrap; min-height:90px; padding:10px; background:#fafafa; border:1px solid var(--line); border-radius:8px; font-size:14px; }
+  .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin:10px 0; }
+  .kpi { background:#f9fafb; border:1px solid var(--line); border-radius:8px; padding:6px 8px; }
+  .kpi b { display:block; font-size:16px; } .kpi span { font-size:11px; color:var(--muted); }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; }
+  code { font-family:ui-monospace, Menlo, monospace; font-size:11.5px; background:#f3f4f6; padding:1px 4px; border-radius:4px; }
+  .wf { margin:8px 0; } .wf .bar { position:relative; height:16px; margin:3px 0; background:#f3f4f6; border-radius:4px; overflow:hidden; }
+  .wf .seg { position:absolute; top:0; bottom:0; border-radius:4px; opacity:.85; }
+  .wf .lbl { font-size:11px; color:var(--muted); display:flex; justify-content:space-between; }
+  .agree { text-align:center; margin:8px 0; font-size:13px; }
+  details summary { cursor:pointer; color:var(--muted); font-size:12px; }
+  .stats { display:grid; grid-template-columns:repeat(6,1fr); gap:8px; margin-bottom:12px; }
+  .muted { color:var(--muted); } .small { font-size:12px; }
+  .rate { display:flex; gap:6px; margin-top:8px; }
+  .rate button { font-size:12px; padding:4px 8px; }
+  pre { max-height:320px; overflow:auto; background:#0b1020; color:#d7dce5; padding:10px; border-radius:8px; font-size:11.5px; }
+  .pill { display:inline-block; font-size:11px; padding:1px 7px; border-radius:999px; background:#eef2ff; color:#3730a3; margin-right:4px; }
+  .err { color:var(--bad); }
+  @media (max-width: 1000px) { main { grid-template-columns:1fr; } .arms { grid-template-columns:1fr; } .stats { grid-template-columns:repeat(2,1fr); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Planner Lab <span class="muted small"><span class="pill" style="background:#dbeafe;color:#1e3a8a">Flow A</span> LLM two-call: request #1 plans tools, request #2 composes &nbsp; <span class="pill" style="background:#d1fae5;color:#065f46">Flow B</span> Jev plans (TypeSafe), LLM composes once</span></h1>
+  <div id="checks" class="row" style="flex-wrap:wrap; gap:6px; flex:1"></div>
+</header>
+<main>
+  <aside>
+    <div class="card">
+      <h2>Trigger</h2>
+      <label>Message (farmer's words, any supported language)</label>
+      <textarea id="query" placeholder="મારી ગાય ને તાવ છે અને ખાતી નથી"></textarea>
+      <div class="row">
+        <div><label>Source lang</label><select id="source_lang"><option>gu</option><option>en</option><option>hi</option><option>bn</option><option>mr</option><option>pa</option></select></div>
+        <div><label>Target lang</label><select id="target_lang"><option>gu</option><option>en</option><option>hi</option><option>bn</option><option>mr</option><option>pa</option></select></div>
+        <div><label>Channel</label><select id="channel"><option>web</option><option>whatsapp</option></select></div>
+      </div>
+      <div class="row">
+        <div><label>Persona</label><select id="persona"><option>farmer</option><option>doctor</option></select></div>
+        <div><label>Farmer mobile (real profile + tools)</label><input type="text" id="mobile" placeholder="98xxxxxxxx"></div>
+      </div>
+      <label>Conversation id <span class="muted">(same id = multi-turn; each arm keeps its own history)</span></label>
+      <div class="row"><input type="text" id="session_id"><button class="btn secondary" id="newsession" style="flex:0 0 auto">New</button></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="send">Send message</button>
+        <button class="btn rec" id="rec">● Start call (mic)</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button class="btn secondary" id="preview">Preview Jev plan only</button>
+      </div>
+      <div id="transcript" class="small muted" style="margin-top:6px"></div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <h2>Adjust</h2>
+      <div class="row">
+        <label style="margin:0"><input type="checkbox" id="arm_llm" checked> LLM arm</label>
+        <label style="margin:0"><input type="checkbox" id="arm_jev" checked> Jev arm</label>
+      </div>
+      <label style="margin-top:10px"><input type="checkbox" id="dry_run" checked> Dry-run side effects (bookings, loan code, SMS)</label>
+      <label><input type="checkbox" id="persist" checked> Persist traces to comparison DB</label>
+      <label>Tools enabled (both arms)</label>
+      <div class="tools" id="tools"></div>
+      <div class="row">
+        <div><label>RAG top_k</label><input type="number" id="search_top_k" value="8" min="1" max="20"></div>
+        <div><label>Search fan-out (Jev)</label><input type="number" id="search_fanout" value="2" min="1" max="3"></div>
+      </div>
+      <div class="row">
+        <div><label>Tool-choice min confidence</label><input type="number" id="tool_choice_min_confidence" value="0.45" step="0.05" min="0" max="1"></div>
+        <div><label>Extra-tool yes threshold</label><input type="number" id="extra_tool_noul_threshold" value="0.70" step="0.05" min="0" max="1"></div>
+      </div>
+      <div class="row">
+        <div><label>Yes/no threshold</label><input type="number" id="yes_threshold" value="0.60" step="0.05" min="0" max="1"></div>
+        <div><label>Low-confidence policy</label><select id="low_confidence_policy"><option value="escalate_llm">escalate to LLM planner</option><option value="search_documents">search documents</option><option value="ask_clarification">ask clarification</option></select></div>
+      </div>
+      <label>Model profile (both arms' generative model)</label>
+      <select id="model_profile"></select>
+      <div class="row">
+        <div><label>Jev model</label><input type="text" id="typesafe_model" value="jev-latest"></div>
+        <div><label>History pairs to Jev</label><input type="number" id="history_pairs" value="3" min="0" max="6"></div>
+      </div>
+      <label>Milk default range (days, when farmer names none)</label><input type="number" id="milk_default_range_days" value="7" min="1" max="31">
+    </div>
+  </aside>
+
+  <section>
+    <div class="card" style="margin-bottom:12px"><h2>Persisted turns so far: Flow A vs Flow B</h2><table id="stats"></table></div>
+    <div class="agree" id="agree"></div>
+    <div class="arms">
+      <div class="card arm llm" id="arm-llm">
+        <h3><span><span class="pill" style="background:#dbeafe;color:#1e3a8a">Flow A</span> LLM two-call (plan request + compose request)</span> <span class="badge" id="status-llm">idle</span></h3>
+        <div class="kpis" id="kpi-llm"></div>
+        <div class="answer" id="answer-llm"></div>
+        <div class="wf" id="wf-llm"></div>
+        <table id="tools-llm"></table>
+        <div class="rate" id="rate-llm"></div>
+      </div>
+      <div class="card arm jev" id="arm-jev">
+        <h3><span><span class="pill" style="background:#d1fae5;color:#065f46">Flow B</span> Jev plan + LLM compose (one model request)</span> <span class="badge" id="status-jev">idle</span></h3>
+        <div class="kpis" id="kpi-jev"></div>
+        <div class="answer" id="answer-jev"></div>
+        <div class="wf" id="wf-jev"></div>
+        <table id="tools-jev"></table>
+        <div class="rate" id="rate-jev"></div>
+        <details style="margin-top:8px"><summary>Jev judgements (state, questions, answers)</summary><pre id="plan-jev">—</pre></details>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Recent turns <button class="btn secondary" id="refresh" style="float:right; padding:3px 8px; font-size:12px">Refresh</button></h2>
+      <table id="history"><thead><tr><th>Time</th><th>Flow</th><th>Query</th><th>Intent</th><th>Tools</th><th>TTFT ms</th><th>Total ms</th><th>Jev ms</th><th>Req</th><th>Esc</th><th>Rating</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+</main>
+<script>
+const API = location.pathname.replace(/\/lab\/?$/, '');
+const $ = id => document.getElementById(id);
+const arms = ['llm','jev'];
+const state = { audio:{}, traces:{}, mediaRecorder:null, chunks:[] };
+
+function newSession(){ $('session_id').value = 'lab-' + Math.random().toString(36).slice(2,10); }
+$('newsession').onclick = newSession; newSession();
+
+async function loadConfig(){
+  const r = await fetch(API + '/lab/config'); const c = await r.json();
+  $('checks').innerHTML = Object.entries(c.checks).map(([k,v]) => `<span class="badge ${v?'ok':'no'}">${k}</span>`).join('');
+  $('tools').innerHTML = c.tools.map(t => `<label title="${t.description}"><input type="checkbox" data-tool="${t.name}" checked> ${t.name}</label>`).join('');
+  $('model_profile').innerHTML = (c.profiles||[]).map(p => `<option value="${p.name}">${p.name} · ${p.agent_model||''}${p.weight?' (default)':''}</option>`).join('');
+  for (const [k,v] of Object.entries(c.defaults)) { const el = $(k); if (el && el.type !== 'checkbox' && typeof v !== 'object') el.value = v; }
+  $('dry_run').checked = true;
+}
+function overrides(){
+  const o = {};
+  for (const k of ['search_fanout','tool_choice_min_confidence','extra_tool_noul_threshold','yes_threshold','history_pairs','milk_default_range_days','search_top_k']) o[k] = Number($(k).value);
+  o.low_confidence_policy = $('low_confidence_policy').value; o.typesafe_model = $('typesafe_model').value;
+  return o;
+}
+function disabledTools(){ return [...document.querySelectorAll('#tools input')].filter(i => !i.checked).map(i => i.dataset.tool); }
+function body(extra){
+  return Object.assign({
+    query: $('query').value, arms: arms.filter(a => $('arm_'+a).checked), session_id: $('session_id').value,
+    source_lang: $('source_lang').value, target_lang: $('target_lang').value, channel: $('channel').value, persona: $('persona').value,
+    mobile: $('mobile').value || null, dry_run_side_effects: $('dry_run').checked, persist: $('persist').checked,
+    disabled_tools: disabledTools(), search_top_k: Number($('search_top_k').value), planner_overrides: overrides(),
+    model_profile: $('model_profile').value || null,
+  }, extra || {});
+}
+function resetArm(a){
+  $('answer-'+a).textContent = ''; $('kpi-'+a).innerHTML = ''; $('wf-'+a).innerHTML = ''; $('tools-'+a).innerHTML = ''; $('rate-'+a).innerHTML = '';
+  $('status-'+a).textContent = 'waiting'; $('status-'+a).className = 'badge';
+  if (a==='jev') $('plan-jev').textContent = '—';
+}
+function kpis(a, d){
+  const m = d.stages.marks, s = d.stages.spans, meta = d.stages.meta || {};
+  const ttft = (m.first_client_token!=null && m.agent_start!=null) ? (m.first_client_token - m.agent_start).toFixed(0) : '—';
+  const items = [
+    ['Agent-step TTFT', ttft + ' ms'], ['Total turn', d.stages.total_ms.toFixed(0) + ' ms'],
+    ['Model', (meta.agent_model||'').split(':').pop()],
+    ['Model requests', meta.model_requests ?? '—'], ['Tools run', (d.tools||[]).length],
+  ];
+  if (a==='jev') items.push(['Jev plan wait', (s.plan||0).toFixed(0)+' ms'], ['Jev call', (meta.jev_ms||0).toFixed(0)+' ms' + (meta.plan_overlapped_with_moderation ? ' (overlapped moderation)' : '')], ['Plan confidence', meta.plan_confidence ?? '—'], ['Escalated to Flow A', meta.escalated ? 'yes' : 'no']);
+  else items.push(['Pre-translation', (s.pretranslation||0).toFixed(0)+' ms'], ['Moderation', (s.moderation||0).toFixed(0)+' ms'], ['Request #1 (plan tools)', (s.model_request_1||0).toFixed(0)+' ms'], ['Request #2 (compose)', (s.model_request_2||0).toFixed(0)+' ms']);
+  items.push(['Input tokens (est.)', (meta.gen_input_tokens_est||0) + (a==='jev' ? ` + ${meta.jev_input_tokens||0} Jev` : '')]);
+  $('kpi-'+a).innerHTML = items.map(([k,v]) => `<div class="kpi"><b>${v}</b><span>${k}</span></div>`).join('');
+}
+function waterfall(a, d){
+  const s = d.stages.spans, m = d.stages.marks, total = Math.max(d.stages.total_ms, 1);
+  const color = a==='llm' ? 'var(--llm)' : 'var(--jev)';
+  const rows = [];
+  const seq = ['pretranslation','moderation','plan','tools','compose','model_request_1','model_request_2','model_request_3'];
+  let cursor = 0;
+  for (const k of seq) { if (s[k]) rows.push([k, s[k]]); }
+  // Sequential approximation: spans are laid end to end in pipeline order (they are sequential in the code).
+  const html = rows.map(([k,ms]) => { const left = (cursor/total*100).toFixed(1), w = Math.max(ms/total*100,0.5).toFixed(1); cursor += ms;
+    return `<div class="lbl"><span>${k}</span><span>${ms.toFixed(0)} ms</span></div><div class="bar"><div class="seg" style="left:${left}%;width:${w}%;background:${color}"></div></div>`; }).join('');
+  const marks = ['agent_first_event','compose_first_token','first_client_token','agent_done'].filter(k => m[k]!=null).map(k => `<span class="pill">${k}: ${m[k].toFixed(0)} ms</span>`).join('');
+  $('wf-'+a).innerHTML = html + `<div style="margin-top:6px">${marks}</div>`;
+}
+function toolsTable(a, tools){
+  if (!tools || !tools.length) { $('tools-'+a).innerHTML = '<tr><td class="muted">no tools called</td></tr>'; return; }
+  $('tools-'+a).innerHTML = '<tr><th>Tool</th><th>Args</th><th>ms</th><th></th></tr>' + tools.map(t =>
+    `<tr><td><code>${t.name}</code></td><td><code>${JSON.stringify(t.args)}</code></td><td>${t.ms!=null?Number(t.ms).toFixed(0):'—'}</td><td>${t.dry_run?'<span class="pill">dry run</span>':''}${t.ok===false?'<span class="err">failed</span>':''}${t.confidence!=null?`<span class="pill">p ${t.confidence}</span>`:''}</td></tr>`).join('');
+}
+function rating(a, traceId){
+  if (!traceId) { $('rate-'+a).innerHTML = '<span class="muted small">not persisted</span>'; return; }
+  $('rate-'+a).innerHTML = ['correct','wrong','better','worse'].map(r => `<button class="btn secondary" data-r="${r}">${r}</button>`).join('') + ' <span class="small muted"></span>';
+  $('rate-'+a).querySelectorAll('button').forEach(b => b.onclick = async () => {
+    await fetch(API + '/lab/rate', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({trace_id: traceId, rating: b.dataset.r})});
+    $('rate-'+a).querySelector('span').textContent = 'saved: ' + b.dataset.r; loadHistory();
+  });
+}
+function agreement(done){
+  if (!(done.llm && done.jev)) { $('agree').textContent = ''; return; }
+  const set = d => new Set((d.tools||[]).map(t => t.name));
+  const A = set(done.llm), B = set(done.jev);
+  const same = A.size===B.size && [...A].every(x => B.has(x));
+  const sub = [...A].every(x => B.has(x)) || [...B].every(x => A.has(x));
+  const t = d => (d.stages.marks.first_client_token - d.stages.marks.agent_start);
+  const dt = (t(done.llm) - t(done.jev));
+  $('agree').innerHTML = `This turn — tool plan: <b>${same?'same':sub?'subset':'different'}</b> · Flow A {${[...A].join(', ')||'none'}} vs Flow B {${[...B].join(', ')||'none'}} · Flow B agent-step TTFT: <b style="color:${dt>0?'var(--jev)':'var(--bad)'}">${dt>0?'−':'+'}${Math.abs(dt).toFixed(0)} ms</b> vs Flow A`;
+}
+async function streamSSE(url, payload, onEvent){
+  const r = await fetch(url, {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload)});
+  if (!r.ok) throw new Error(await r.text());
+  const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
+  while (true) { const {value, done} = await reader.read(); if (done) break; buf += dec.decode(value, {stream:true});
+    let idx; while ((idx = buf.indexOf('\n\n')) >= 0) { const raw = buf.slice(0, idx); buf = buf.slice(idx+2);
+      const line = raw.split('\n').find(l => l.startsWith('data: ')); if (line) onEvent(JSON.parse(line.slice(6))); } }
+}
+function handle(ev, done){
+  const a = ev.arm;
+  if (ev.type==='transcript') { $('transcript').textContent = `Transcript (${ev.stt_ms} ms STT): ${ev.text}`; $('query').value = ev.text; }
+  if (ev.type==='start') { $('status-'+a).textContent = 'running · history ' + ev.history_turns + ' turns'; }
+  if (ev.type==='token') { $('answer-'+a).textContent += ev.text; if (!$('status-'+a).dataset.first) { $('status-'+a).dataset.first='1'; $('status-'+a).textContent = 'first token @ ' + ev.t_ms.toFixed(0) + ' ms'; } }
+  if (ev.type==='plan') { $('plan-jev').textContent = JSON.stringify({intent: ev.intent, confidence: ev.confidence, escalate: ev.escalate, escalate_reason: ev.escalate_reason, jev_ms: ev.jev_ms, jev_input_tokens: ev.jev_input_tokens, model: ev.jev_model, tools: ev.tools, notes: ev.notes, answers: ev.answers}, null, 2); }
+  if (ev.type==='done') { done[a] = ev; $('status-'+a).textContent = 'done'; $('status-'+a).className = 'badge ok'; delete $('status-'+a).dataset.first; kpis(a, ev); waterfall(a, ev); toolsTable(a, ev.tools); rating(a, ev.trace_id); agreement(done); }
+  if (ev.type==='error') { $('status-'+a).textContent = 'error'; $('status-'+a).className = 'badge no'; $('answer-'+a).innerHTML = `<span class="err">${ev.error}</span>`; }
+  if (ev.type==='audio') { const audio = new Audio('data:audio/wav;base64,' + ev.audio_base64); const btn = document.createElement('button'); btn.className='btn secondary'; btn.textContent = `▶ Play ${a} answer (TTS ${ev.tts_ms} ms)`; btn.onclick = () => audio.play(); $('rate-'+a).appendChild(btn); }
+  if (ev.type==='end') { loadHistory(); }
+}
+$('send').onclick = async () => {
+  const done = {}; arms.forEach(resetArm); $('transcript').textContent=''; $('send').disabled = true;
+  try { await streamSSE(API + '/lab/turn', body(), ev => handle(ev, done)); } catch (e) { $('agree').innerHTML = `<span class="err">${e.message}</span>`; } finally { $('send').disabled = false; }
+};
+$('preview').onclick = async () => {
+  resetArm('jev'); $('status-jev').textContent = 'planning…';
+  const r = await fetch(API + '/lab/plan-preview', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({query: $('query').value, session_id: $('session_id').value, mobile: $('mobile').value || null, persona: $('persona').value, planner_overrides: overrides(), disabled_tools: disabledTools()})});
+  const d = await r.json(); $('plan-jev').textContent = JSON.stringify(d, null, 2); $('plan-jev').parentElement.open = true;
+  $('status-jev').textContent = `plan only · ${d.plan.jev_ms} ms · ${d.plan.jev_input_tokens} tokens`; toolsTable('jev', d.plan.tools); $('answer-jev').textContent = (d.plan.notes||[]).join('\n');
+};
+// Voice: record with the mic, send as a voice turn (STT -> both arms -> TTS).
+$('rec').onclick = async () => {
+  if (state.mediaRecorder && state.mediaRecorder.state === 'recording') { state.mediaRecorder.stop(); return; }
+  const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+  state.chunks = []; state.mediaRecorder = new MediaRecorder(stream);
+  state.mediaRecorder.ondataavailable = e => state.chunks.push(e.data);
+  state.mediaRecorder.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop()); $('rec').textContent = '● Start call (mic)';
+    const blob = new Blob(state.chunks, {type: state.mediaRecorder.mimeType}); const b64 = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result.split(',')[1]); fr.readAsDataURL(blob); });
+    const done = {}; arms.forEach(resetArm); $('transcript').textContent = 'transcribing…';
+    try { await streamSSE(API + '/lab/voice-turn', body({audio_base64: b64, tts: true}), ev => handle(ev, done)); } catch (e) { $('transcript').innerHTML = `<span class="err">${e.message}</span>`; }
+  };
+  state.mediaRecorder.start(); $('rec').textContent = '■ Stop & send';
+};
+async function loadHistory(){
+  const [tr, st] = await Promise.all([fetch(API + '/lab/traces?limit=60').then(r => r.json()), fetch(API + '/lab/stats').then(r => r.json())]);
+  if (st.available) {
+    const A = st.arms.llm, B = st.arms.jev, ag = st.agreement;
+    const d = (a, b, lowerBetter=true) => (a==null||b==null) ? '' : (()=>{ const v = b - a; const good = lowerBetter ? v < 0 : v > 0; return `<span style="color:${good?'var(--jev)':v===0?'var(--muted)':'var(--bad)'}">${v>0?'+':''}${Math.round(v)}</span>`; })();
+    const row = (label, a, b, delta, note) => `<tr><td>${label}${note?` <span class="muted small">${note}</span>`:''}</td><td style="color:var(--llm)"><b>${a ?? '—'}</b></td><td style="color:var(--jev)"><b>${b ?? '—'}</b></td><td>${delta ?? ''}</td></tr>`;
+    $('stats').innerHTML = `<tr><th>metric</th><th style="color:var(--llm)">Flow A · LLM two-call</th><th style="color:var(--jev)">Flow B · Jev + LLM one-call</th><th>B − A</th></tr>`
+      + row('turns recorded', A.turns, B.turns, '')
+      + row('agent-step TTFT p50 (ms)', A.ttft_p50, B.ttft_p50, d(A.ttft_p50, B.ttft_p50), 'agent start → first token')
+      + row('agent-step TTFT p95 (ms)', A.ttft_p95, B.ttft_p95, d(A.ttft_p95, B.ttft_p95))
+      + row('total turn p50 (ms)', A.total_p50, B.total_p50, d(A.total_p50, B.total_p50), 'incl. pretranslation, moderation, translation')
+      + row('total turn p95 (ms)', A.total_p95, B.total_p95, d(A.total_p95, B.total_p95))
+      + row('generative model requests / turn', A.model_requests_avg, B.model_requests_avg, d(A.model_requests_avg, B.model_requests_avg))
+      + row('turns escalated to Flow A planner', '—', B.escalated, '', 'Jev unsure / unavailable → legacy loop answered')
+      + row('errors', A.errors, B.errors, '')
+      + row('manual ratings ✓ / ✗', `${A.ratings.correct} / ${A.ratings.wrong}`, `${B.ratings.correct} / ${B.ratings.wrong}`, '')
+      + `<tr><td colspan="4" class="small muted" style="padding-top:8px">Tool-plan agreement (same message, both flows): <b>${ag.same_tools}</b> same · ${ag.subset} subset · ${ag.different} different of ${ag.pairs} pairs. Shadow mode (Flow B planned silently behind a Flow A production turn): ${ag.shadow_same}/${ag.shadow_turns} same.</td></tr>`;
+  }
+  const flow = a => a==='llm' ? '<span class="pill" style="background:#dbeafe;color:#1e3a8a">A · LLM×2</span>' : a==='jev' ? '<span class="pill" style="background:#d1fae5;color:#065f46">B · Jev+LLM</span>' : `<span class="pill">${a}</span>`;
+  $('history').querySelector('tbody').innerHTML = tr.map(r => `<tr><td class="small muted">${(r.ts||'').slice(5,19).replace('T',' ')}</td><td>${flow(r.arm)}</td><td title="${(r.answer||'').replace(/"/g,'&quot;')}">${(r.query||'').slice(0,60)}</td><td>${r.intent||''}</td><td>${(r.tools_json||[]).map(t=>t.name).join(', ')}</td><td>${r.ttft_ms!=null?Math.round(r.ttft_ms):''}</td><td>${r.total_ms!=null?Math.round(r.total_ms):''}</td><td>${r.jev_ms!=null?Math.round(r.jev_ms):''}</td><td>${r.model_requests??''}</td><td>${r.escalated?'yes':''}</td><td>${r.rating||''}${r.agreement?` <span class="pill">${r.agreement}</span>`:''}</td></tr>`).join('');
+}
+$('refresh').onclick = loadHistory;
+loadConfig().then(loadHistory);
+</script>
+</body>
+</html>
