@@ -186,6 +186,11 @@ question from document search in 2.8 s. Flow B's two misses (a health call plann
 a vet-office lookup; searching instead of the union tool for a farmer whose union has no
 scheme catalogue) were fixed in the decoder / the sample set.
 
+Rerun after those fixes (14 questions, gpt-4.1 both flows): Flow B 14/14, Flow A 13/14 (still
+skips retrieval on the sick-cow message), agreement 13/14, agent-step TTFT p50 3.2 s vs 3.9 s,
+p95 4.3 s vs 5.1 s, cost $0.0173 vs $0.0368 per turn (7.5k + 5.7k Jev tokens vs 17.9k). Flow A
+did not thrash this time; the loop is non-deterministic, which is the point.
+
 Caveats: n=10 per run on a laptop over the public internet; tool latencies are stand-in
 constants; ratings not yet collected. Re-run `scripts/planner_eval.py` with a larger set and
 real backends before quoting numbers externally.
