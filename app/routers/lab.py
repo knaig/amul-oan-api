@@ -325,6 +325,33 @@ async def lab_warm(body: dict):
         return {"warmed": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
+STANDIN_PRESETS = {
+    # ms per hop. "production_like" = what a bridge/seeker next to the BPPs typically shows;
+    # "pessimistic" = the first guesses this lab shipped with; "zero" = models only.
+    "production_like": {"vet": 400, "schemes": 400, "vistaar": 800, "bridge_ack": 80, "callback": 300, "pashugpt": 200},
+    "pessimistic": {"vet": 900, "schemes": 900, "vistaar": 2200, "bridge_ack": 150, "callback": 1200, "pashugpt": 600},
+    "zero": {"vet": 5, "schemes": 5, "vistaar": 5, "bridge_ack": 5, "callback": 5, "pashugpt": 5},
+}
+
+
+@router.post("/standin-latency")
+async def lab_standin_latency(body: dict):
+    """Set the stand-in network's per-hop latencies (preset name or explicit ms)."""
+    _guard()
+    values = dict(STANDIN_PRESETS.get(str(body.get("preset") or ""), {}))
+    values.update({k: int(v) for k, v in (body.get("latency_ms") or {}).items() if k in STANDIN_PRESETS["zero"]})
+    if not values:
+        raise HTTPException(status_code=422, detail="preset or latency_ms required")
+    base = (get_config_value("STANDIN_URL") or "http://127.0.0.1:3100").rstrip("/")
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=3) as client:
+            r = await client.post(f"{base}/standin/latency", json=values)
+            return {"ok": r.status_code == 200, "latency_ms": r.json().get("latency_ms"), "presets": STANDIN_PRESETS}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "presets": STANDIN_PRESETS}
+
+
 @router.get("/traces")
 async def lab_traces(limit: int = 100, compare_group: Optional[str] = None):
     _guard()

@@ -57,7 +57,7 @@
 <div class="tabs"><a class="on" href="./simple">Simple view</a><a href="./">Advanced dashboard</a></div>
 <main>
   <h1>One farmer question, two ways</h1>
-  <p class="sub" style="background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:8px 12px; color:#78350f; font-size:14px">Absolute times here are a laptop talking to OpenAI over the internet, with a stand-in for the Beckn network. Production runs models next to the data and prefetches the farmer profile once per call, so its clock is much shorter. What transfers is the <b>difference between the two lanes</b>: the grey, blue and purple steps are identical work in both ways.</p>
+  <p class="sub" style="background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:8px 12px; color:#78350f; font-size:14px">Why this laptop cannot show 2-3 s: every model step (translate, Jev, write) is a hop from India to a hosted API, about 0.7-1.0 s each and sometimes 2-3 s when OpenAI is slow; production runs those models next to the data at ~0.3 s each. The data backends here are a stand-in whose delays you set below. What transfers is the <b>difference between the two lanes</b>; hatched steps are identical work in both.</p>
   <p class="sub">Today the assistant asks the language model twice: once to decide what data to fetch, once to write the answer. The new way asks <b>Jev</b> (a small, fast decision model) what to fetch, and the language model only writes. Same question, same data sources, same answer model. Watch the two timelines fill.</p>
 
   <div class="card">
@@ -65,6 +65,8 @@
       <div><label>Pick a farmer question</label><select id="q"></select></div>
       <div style="display:flex; gap:8px"><button class="btn" id="ask">Ask both ways</button><button class="btn secondary" id="all">Run all</button></div>
     </div>
+    <div class="ask" style="margin-top:10px"><div><label>Speed of the data backends (Beckn bridge, seeker, PashuGPT) — the stand-in replays these delays; set them to what your production logs show</label>
+      <select id="net"><option value="production_like" selected>production-like: 0.3 s per Beckn callback, 0.8 s Vistaar, 0.4 s vet search</option><option value="pessimistic">pessimistic (lab's first guess): 1.2 s per callback, 2.2 s Vistaar</option><option value="zero">none: show model time only</option></select></div></div>
     <div class="ask" style="margin-top:10px"><div><label>Models for the grey steps</label><select id="prof"><option value="gpt41" selected>standard: gpt-4.1 writes, gpt-4.1-mini translates and checks (production-like)</option><option value="fast">experimental: gemini-flash-lite via OpenRouter translates (measured no faster from here)</option><option value="gpt41mini">cheap: gpt-4.1-mini writes too</option></select></div></div>
     <label style="margin-top:10px; display:flex; gap:8px; align-items:center; font-size:14px; color:var(--ink)"><input type="checkbox" id="pipe_tr" checked> Translate the answer in parallel with writing it (both ways)</label>
     <label style="margin-top:6px; display:flex; gap:8px; align-items:center; font-size:14px; color:var(--ink)"><input type="checkbox" id="jev_mod" checked> NEW way: let Jev do the safety check inside the same request (no separate safety call; the language model's verdict is still logged for comparison)</label>
@@ -250,7 +252,8 @@ async function ask(idx, session){
   ['track-a','track-b'].forEach(id => $(id).innerHTML = '<div class="seg" style="left:0;width:100%;background:#e2e8f0;color:var(--muted)">working…</div>');
   $('steps-a').innerHTML = ''; $('steps-b').innerHTML = '';
   $('ask').disabled = true; $('all').disabled = true;
-  $('status').textContent = 'Loading the farmer profile into cache (production does this once per call)…';
+  $('status').textContent = 'Setting backend speed + loading the farmer profile into cache (production does this once per call)…';
+  await fetch(API + '/lab/standin-latency', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({preset: $('net').value})}).catch(() => {});
   await fetch(API + '/lab/warm', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({mobile:'9876543210'})}).catch(() => {});
   const sid = session || ('simple-' + Math.random().toString(36).slice(2,8));
   // One flow at a time, so neither steals CPU or network from the other and each bar is exact.
