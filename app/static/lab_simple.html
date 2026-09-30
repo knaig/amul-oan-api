@@ -50,6 +50,10 @@
   .muted { color:var(--muted); } .small { font-size:13px; }
   .toggle { font-size:13px; } .toggle button { font:inherit; border:1px solid var(--line); background:#fff; padding:3px 10px; border-radius:999px; cursor:pointer; margin-left:6px; }
   .toggle button.on { background:#111827; color:#fff; border-color:#111827; }
+  table.runs { border-collapse:collapse; width:100%; font-size:13px; }
+  table.runs th, table.runs td { text-align:right; padding:5px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.runs th:nth-child(2), table.runs td:nth-child(2), table.runs td:last-child, table.runs th:last-child { text-align:left; }
+  table.runs tr.flag td { color:var(--muted); text-decoration:line-through; } table.runs tr.flag td:last-child { text-decoration:none; }
   @media (max-width:800px) { .savings { grid-template-columns:1fr 1fr; } .answers { grid-template-columns:1fr; } .ask { grid-template-columns:1fr; } }
 </style>
 </head>
@@ -63,8 +67,13 @@
   <div class="card">
     <div class="ask">
       <div><label>Pick a farmer question</label><select id="q"></select></div>
-      <div style="display:flex; gap:8px"><button class="btn" id="ask">Ask both ways</button><button class="btn secondary" id="all">Run all</button></div>
+      <div style="display:flex; gap:8px"><button class="btn" id="ask">Ask both ways</button><button class="btn secondary" id="all">Run all</button><button class="btn secondary" id="stop" disabled>Stop</button></div>
     </div>
+    <div class="ask" style="margin-top:10px; grid-template-columns:auto 1fr">
+      <div><label>Attempts per question</label><input type="number" id="attempts" min="1" max="20" value="5" style="width:90px; font:inherit; padding:9px 10px; border:1px solid var(--line); border-radius:10px"></div>
+      <div class="small muted" style="padding-bottom:10px">One answer tells you little: model speed swings from moment to moment. Each attempt asks both ways once (a fresh conversation), alternating which goes first, and costs roughly $0.03-0.05 of model usage.</div>
+    </div>
+    <label style="margin-top:6px; display:flex; gap:8px; align-items:center; font-size:14px; color:var(--ink)"><input type="checkbox" id="warmup" checked> Start with one uncounted warm-up attempt (the first call after a pause pays extra connection time)</label>
     <div class="ask" style="margin-top:10px"><div><label>Question language</label>
       <select id="lang"><option value="en" selected>English: no translation steps (cleanest view of the planner difference)</option><option value="gu">Gujarati: full production path (translate in, answer in English, translate out)</option></select></div></div>
     <div class="ask" style="margin-top:10px"><div><label>Speed of the data backends (Beckn bridge, seeker, PashuGPT) — the stand-in replays these delays; set them to what your production logs show</label>
@@ -126,9 +135,14 @@
     <p class="small muted" id="agree" style="margin:10px 0 0"></p>
   </div>
 
-  <div class="card" id="runall" style="display:none">
-    <h3 style="margin:0 0 8px; font-size:16px">Across all questions run in this session</h3>
-    <div class="savings" id="agg"></div>
+  <div class="card" id="results" style="display:none">
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px">
+      <h3 style="margin:0; font-size:16px">Across all attempts <span class="muted small" id="res-count"></span></h3>
+      <button class="btn secondary" id="clear" style="padding:5px 12px; font-size:13px">Clear results</button>
+    </div>
+    <div class="savings" id="res-cards"></div>
+    <p class="small muted" id="res-note" style="margin:10px 0"></p>
+    <div style="overflow-x:auto"><table class="runs" id="res-table"></table></div>
   </div>
 </main>
 <script>
@@ -144,10 +158,10 @@ const QUESTIONS = [
   {q:'કિસાન ક્રેડિટ કાર્ડ વિશે માહિતી આપો', en:'Tell me about Kisan Credit Card'},
 ];
 $('q').innerHTML = QUESTIONS.map((x,i) => `<option value="${i}">${x.en}  ·  ${x.q}</option>`).join('');
-let lang = 'gu'; const last = {}; const agg = [];
+let lang = 'gu'; const last = {};
 document.querySelectorAll('.toggle button').forEach(b => b.onclick = () => { document.querySelectorAll('.toggle button').forEach(x => x.classList.remove('on')); b.classList.add('on'); lang = b.dataset.lang; renderAnswers(); });
 
-function fmt(ms){ return ms == null ? '—' : (ms >= 1000 ? (ms/1000).toFixed(1) + ' s' : Math.round(ms) + ' ms'); }
+function fmt(ms){ return ms == null ? '—' : (Math.abs(ms) >= 1000 ? (ms/1000).toFixed(1) + ' s' : Math.round(ms) + ' ms'); }
 function renderAnswers(){
   for (const [k, d] of Object.entries(last)) {
     const el = $(k === 'llm' ? 'ans-a' : 'ans-b'); if (!d) continue;
@@ -235,48 +249,103 @@ function render(){
   $('savings-note').textContent = 'Relevant time = deciding what to fetch + the model writing until the first word. Greyed bars (profile, translate both ways, safety check, fetching data) are the same work in both ways and depend on where the servers are, so they are excluded from the saving.';
   const same = JSON.stringify([...new Set((A.tools||[]).map(t=>t.name))].sort()) === JSON.stringify([...new Set((B.tools||[]).map(t=>t.name))].sort());
   $('agree').textContent = same ? 'Both ways fetched the same data.' : `Different data fetched — today: ${toolsTxt(A)} · new: ${toolsTxt(B)}. Read both answers and judge which is more complete.`;
-  agg.push({dt, calls:A.stages.meta.model_requests||2, tokA, tokB:tokB+jevTok, costA, costB});
-  if (agg.length > 1) {
-    $('runall').style.display = '';
-    const med = xs => { const s=[...xs].sort((a,b)=>a-b); return s[Math.floor(s.length/2)]; };
-    const sumA = agg.reduce((a,x)=>a+(x.costA||0),0), sumB = agg.reduce((a,x)=>a+(x.costB||0),0);
-    $('agg').innerHTML = [
-      {v:'−'+fmt(med(agg.map(x=>x.dt))), t:`median time saved to first word (${agg.length} questions)`},
-      {v:`${(agg.reduce((a,x)=>a+x.calls,0)/agg.length).toFixed(1)} → 1`, t:'average model calls per question'},
-      {v:`−${Math.round((1 - agg.reduce((a,x)=>a+x.tokB,0)/agg.reduce((a,x)=>a+x.tokA,0))*100)}%`, t:'tokens (incl. Jev)'},
-      {v: sumA ? `−${Math.round((1-sumB/sumA)*100)}%` : '—', t:`cost ($${sumA.toFixed(3)} → $${sumB.toFixed(3)} total)`},
-    ].map(c => `<div class="save"><b>${c.v}</b><span>${c.t}</span></div>`).join('');
-  }
 }
-async function ask(idx, session){
+// ── Repeated attempts: medians instead of one lucky or unlucky answer ──
+const SLOW_SAFETY_MS = 3000;  // a safety check this slow means the network / OpenAI was slow for everything
+const results = []; let stopping = false;
+const median = xs => { if (!xs.length) return null; const s = [...xs].sort((a,b)=>a-b), m = Math.floor(s.length/2); return s.length % 2 ? s[m] : (s[m-1] + s[m]) / 2; };
+const p90 = xs => { if (!xs.length) return null; const s = [...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.ceil(0.9*s.length)-1)]; };
+const toolSet = d => JSON.stringify([...new Set((d.tools||[]).map(t=>t.name))].sort());
+const toolNames = d => (d.tools||[]).length ? [...new Set(d.tools.map(t => t.name.replace(/_/g,' ')))].join(', ') : 'nothing';
+function record(idx, order, A, B){
+  const ok = A && A.stages && B && B.stages;
+  const row = {q: QUESTIONS[idx].en, order: order[0] === 'llm' ? 'TODAY first' : 'NEW first', error: !ok};
+  if (ok) {
+    const slowA = (A.stages.spans.moderation || 0) > SLOW_SAFETY_MS, slowB = (B.stages.spans.moderation || 0) > SLOW_SAFETY_MS;
+    // With no lookup, the language model's first call IS the answer: there is no separate decide time.
+    const direct = !(A.tools || []).length && (A.stages.meta.model_requests || 1) < 2;
+    Object.assign(row, {
+      llmDecide: direct ? null : (A.stages.spans.model_request_1 || null), direct, jevDecide: B.stages.meta.jev_ms || null,
+      toolsA: toolNames(A), toolsB: toolNames(B),
+      relA: A.stages.meta.relevant_ms, relB: B.stages.meta.relevant_ms,
+      same: toolSet(A) === toolSet(B), handback: !!B.stages.meta.escalated, loops: (A.stages.meta.model_requests || 2) > 2,
+      flagged: slowA || slowB,
+    });
+  }
+  results.push(row); renderResults();
+}
+function renderResults(){
+  $('results').style.display = results.length ? '' : 'none';
+  const good = results.filter(r => !r.error && !r.flagged);
+  const excluded = results.length - good.length;
+  $('res-count').textContent = `(${good.length} counted${excluded ? `, ${excluded} left out` : ''})`;
+  const col = k => good.map(r => r[k]).filter(v => v != null);
+  const saved = good.filter(r => r.relA != null && r.relB != null).map(r => r.relA - r.relB);
+  const mSaved = median(saved);
+  const savedSame = good.filter(r => r.same && r.relA != null && r.relB != null).map(r => r.relA - r.relB);
+  const signed = v => v == null ? '—' : (v >= 0 ? '−' : '+') + fmt(Math.abs(v));
+  const mDecA = median(col('llmDecide')), mDecB = median(col('jevDecide')), mRelA = median(col('relA')), mRelB = median(col('relB'));
+  const direct = good.filter(r => r.direct).length;
+  $('res-cards').innerHTML = [
+    {v:`${fmt(mDecA)} → ${fmt(mDecB)}`, t:`deciding what to fetch, typical (median): language model call → Jev call. Slow case (p90): ${fmt(p90(col('llmDecide')))} → ${fmt(p90(col('jevDecide')))}${direct ? ` · ${direct} attempt(s) where the language model looked nothing up are left out of its side` : ''}`, good: mDecA != null && mDecB != null && mDecB < mDecA},
+    {v:`${fmt(mRelA)} → ${fmt(mRelB)}`, t:`relevant time, typical: decide + write to first word. Slow case (p90): ${fmt(p90(col('relA')))} → ${fmt(p90(col('relB')))}`, good: mRelA != null && mRelB != null && mRelB < mRelA},
+    {v: signed(mSaved), t:`typical saving per question, attempt by attempt (${saved.filter(x => x > 0).length} of ${saved.length} attempts faster with Jev)${savedSame.length !== saved.length ? ` · when both fetched the same data: ${signed(median(savedSame))} (${savedSame.length} attempts)` : ''}`, good: mSaved != null && mSaved > 0},
+    {v:`${good.filter(r => r.same).length} / ${good.length}`, t:`attempts where both ways fetched the same data${good.some(r => r.handback) ? ` · ${good.filter(r => r.handback).length} handed back to the old way (Jev unsure)` : ''}`, good: good.length > 0 && good.every(r => r.same)},
+  ].map(c => `<div class="save ${c.good ? '' : 'neutral'}"><b>${c.v}</b><span>${c.t}</span></div>`).join('');
+  $('res-note').textContent = `Typical = median: half the attempts were faster, half slower, so one odd attempt cannot move it. Crossed-out rows are left out: a safety check there took over ${SLOW_SAFETY_MS/1000} s, which means the network or OpenAI was slow for everything at that moment, not the planner. "Same data" checks the lookups only; read the answers to judge their quality. When the two ways fetch different data the times are not like for like: fetching more (for example vet documents) gives the writer more to read.`;
+  $('res-table').innerHTML = '<tr><th>#</th><th>question</th><th>order</th><th>LM decide</th><th>Jev decide</th><th>TODAY relevant</th><th>NEW relevant</th><th>saved</th><th>same data</th><th>notes</th></tr>' +
+    results.map((r, i) => r.error
+      ? `<tr class="flag"><td>${i+1}</td><td>${r.q}</td><td>${r.order}</td><td colspan="6"></td><td>error, left out</td></tr>`
+      : `<tr class="${r.flagged ? 'flag' : ''}"><td>${i+1}</td><td>${r.q}</td><td>${r.order}</td><td>${r.direct ? 'no lookup' : fmt(r.llmDecide)}</td><td>${fmt(r.jevDecide)}</td><td>${fmt(r.relA)}</td><td>${fmt(r.relB)}</td><td>${r.relA != null && r.relB != null ? fmt(r.relA - r.relB) : '—'}</td><td>${r.same ? 'yes' : 'no'}</td><td>${[r.flagged ? 'network slow, left out' : '', r.handback ? 'Jev unsure, old way answered' : '', r.loops ? 'old way looped' : '', r.same ? '' : `TODAY fetched ${r.toolsA}; NEW fetched ${r.toolsB}`].filter(Boolean).join('; ')}</td></tr>`).join('');
+}
+async function runAttempt(idx, order, label){
   const item = QUESTIONS[idx]; delete last.llm; delete last.jev;
   $('ans-a').textContent = ''; $('ans-b').textContent = ''; $('agree').textContent = '';
   ['track-a','track-b'].forEach(id => $(id).innerHTML = '<div class="seg" style="left:0;width:100%;background:#e2e8f0;color:var(--muted)">working…</div>');
   $('steps-a').innerHTML = ''; $('steps-b').innerHTML = '';
-  $('ask').disabled = true; $('all').disabled = true;
-  $('status').textContent = 'Setting backend speed + loading the farmer profile into cache (production does this once per call)…';
+  $('status').textContent = `${label}: setting backend speed + loading the farmer profile into cache (production does this once per call)…`;
   await fetch(API + '/lab/standin-latency', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({preset: $('net').value})}).catch(() => {});
   await fetch(API + '/lab/warm', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({mobile:'9876543210'})}).catch(() => {});
-  const sid = session || ('simple-' + Math.random().toString(36).slice(2,8));
+  const sid = 'simple-' + Math.random().toString(36).slice(2,8);
   // One flow at a time, so neither steals CPU or network from the other and each bar is exact.
-  for (const arm of ['llm','jev']) {
+  for (const arm of order) {
     const el = arm === 'llm' ? 'ans-a' : 'ans-b'; const t0 = performance.now(); let first = false;
-    $('status').textContent = `${arm === 'llm' ? 'TODAY' : 'NEW'} way: “${item.en}”…`;
+    $('status').textContent = `${label} · ${arm === 'llm' ? 'TODAY' : 'NEW'} way: “${item.en}”…`;
     const L = $('lang').value;
     const r = await fetch(API + '/lab/turn', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({query: L === 'en' ? item.en : item.q, arms:[arm], session_id: sid, source_lang:L, target_lang:L, mobile:'9876543210', dry_run_side_effects:false, planner_overrides:{concurrent_moderation: $('par_mod').checked, pipelined_translation: $('pipe_tr').checked, moderation_source: $('jev_mod').checked ? 'jev' : 'llm', moderation_compare: $('jev_mod').checked}, model_profile: $('prof').value})});
     const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
     while (true) { const {value, done} = await reader.read(); if (done) break; buf += dec.decode(value, {stream:true});
       let i; while ((i = buf.indexOf('\n\n')) >= 0) { const raw = buf.slice(0, i); buf = buf.slice(i+2); const line = raw.split('\n').find(l => l.startsWith('data: ')); if (!line) continue; const e = JSON.parse(line.slice(6));
-        if (e.type === 'token') { if (!first) { first = true; $('status').textContent = `${arm === 'llm' ? 'TODAY' : 'NEW'} way: first word after ${fmt(performance.now()-t0)} (wall clock, incl. profile + translate + safety)…`; } $(el).textContent += e.text; }
+        if (e.type === 'token') { if (!first) { first = true; $('status').textContent = `${label} · ${arm === 'llm' ? 'TODAY' : 'NEW'} way: first word after ${fmt(performance.now()-t0)} (wall clock, incl. profile + translate + safety)…`; } $(el).textContent += e.text; }
         if (e.type === 'done') { last[e.arm] = e; $(el).textContent = e.answer; }
         if (e.type === 'error') { $(el).textContent = 'Error: ' + e.error; }
       } }
   }
-  $('ask').disabled = false; $('all').disabled = false; $('status').textContent = 'Done. Hover any bar for its exact time.';
   render(); renderAnswers();
+  return [last.llm, last.jev];
 }
-$('ask').onclick = () => ask(Number($('q').value));
-$('all').onclick = async () => { for (let i = 0; i < QUESTIONS.length; i++) { $('q').value = i; await ask(i); await new Promise(r => setTimeout(r, 2500)); } };
+async function runBatch(indices){
+  const n = Math.max(1, Math.min(20, Number($('attempts').value) || 1));
+  stopping = false; $('ask').disabled = true; $('all').disabled = true; $('stop').disabled = false;
+  try {
+    if ($('warmup').checked) await runAttempt(indices[0], ['llm','jev'], 'Warm-up (not counted)');
+    let k = 0;
+    for (const idx of indices) {
+      $('q').value = idx;
+      for (let a = 0; a < n && !stopping; a++, k++) {
+        const order = k % 2 === 0 ? ['llm','jev'] : ['jev','llm'];  // alternate who goes first
+        const [A, B] = await runAttempt(idx, order, `Attempt ${a+1} of ${n}${indices.length > 1 ? ` (question ${indices.indexOf(idx)+1} of ${indices.length})` : ''}`);
+        record(idx, order, A, B);
+      }
+      if (stopping) break;
+    }
+    $('status').textContent = stopping ? 'Stopped. Results so far are below.' : 'Done. Results across all attempts are below; hover any bar for its exact time.';
+  } finally { $('ask').disabled = false; $('all').disabled = false; $('stop').disabled = true; }
+}
+$('ask').onclick = () => runBatch([Number($('q').value)]);
+$('all').onclick = () => runBatch(QUESTIONS.map((_, i) => i));
+$('stop').onclick = () => { stopping = true; $('stop').disabled = true; $('status').textContent = 'Stopping after the current attempt…'; };
+$('clear').onclick = () => { results.length = 0; renderResults(); };
 </script>
 </body>
 </html>
