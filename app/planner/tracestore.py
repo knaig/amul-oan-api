@@ -184,10 +184,19 @@ async def stats() -> dict[str, Any]:
             "relevant_p95": _pct([r.relevant_ms for r in sub if r.relevant_ms is not None], 95),
             "total_p50": _pct(total, 50), "total_p95": _pct(total, 95),
             "escalated": sum(1 for r in sub if r.escalated),
+            "escalation_rate": round(sum(1 for r in sub if r.escalated) / len(sub), 3) if sub else None,
+            # What the accuracy floor costs: first-token time on the turns it caught.
+            "escalated_ttft_p50": _pct([r.ttft_ms for r in sub if r.escalated and r.ttft_ms is not None], 50),
             "jev_ms_p50": _pct([r.jev_ms for r in sub if r.jev_ms], 50),
             "model_requests_avg": round(statistics.mean([r.model_requests for r in sub if r.model_requests]), 2) if any(r.model_requests for r in sub) else None,
             "ratings": {k: sum(1 for r in sub if r.rating == k) for k in ("correct", "wrong", "better", "worse")},
         }
+    shadow = [r for r in rows if r.arm == "shadow"]
+    out["shadow"] = {
+        "turns": len(shadow),
+        "escalated": sum(1 for r in shadow if r.escalated),
+        "escalation_rate": round(sum(1 for r in shadow if r.escalated) / len(shadow), 3) if shadow else None,
+    }
     # Tool-plan agreement across arms sharing a compare_group.
     groups: dict[str, dict[str, TurnRow]] = {}
     for r in rows:

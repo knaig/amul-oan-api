@@ -62,16 +62,21 @@ def _fmt(d) -> str:
     return d.strftime("%d-%m-%Y")
 
 
-def _pick_account(a: _Answers, gates: TurnGates) -> Optional[C.Account]:
+def _pick_account(a: _Answers, gates: TurnGates, min_conf: float) -> Optional[C.Account]:
+    """The booking account, or None when several exist and the farmer's pick is unclear."""
     if not gates.accounts:
         return None
     if len(gates.accounts) == 1:
         return gates.accounts[0]
     label = a.choice("account_for_booking", "not_stated")
-    for acct in gates.accounts:
-        if acct.label() == label:
-            return acct
-    return gates.accounts[0]
+    if a.conf("account_for_booking") < min_conf:
+        return None
+    return next((acct for acct in gates.accounts if acct.label() == label), None)
+
+
+def _ask_account(gates: TurnGates) -> str:
+    listing = "; ".join(acct.label() for acct in gates.accounts)
+    return f"Ask which dairy account this booking is for, listing: {listing}."
 
 
 def _species(a: _Answers, gates: TurnGates, qid: str = "species_for_booking") -> Optional[str]:
@@ -129,14 +134,23 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
     intent = a.choice("intent", "clinical")
     primary = a.choice("primary_tool", "none_answer_directly")
     primary_conf = a.conf("primary_tool")
-    deterministic = False  # a code rule decided the route; no confidence gate applies
+    arg_min = settings.arg_min_confidence
+    # Confidence of the answer that picked each route taken (1.0 for a code rule).
+    # The gate below escalates when the weakest route is below the threshold.
+    route: list[float] = []
 
     ai = a.choice("ai_request", "none") if "create_ai_call" in tools else "none"
     ai_route = ai != "none" or primary == "create_ai_call"
 
     # ── Health call (rule 1 of booking routing; precedence over retrieval) ──
     health = a.choice("health_request", "none") if "create_health_call" in tools else "none"
+    health_conf = a.conf("health_request")
     offered = a.yes("last_assistant_offered_health_call", yes) and a.yes("farmer_says_yes", yes)
+    # A booking is a write: it needs the farmer's own request or a yes to an actual offer,
+    # never Jev's tool pick alone.
+    books = offered or (health_conf >= arg_min and (
+        health == "explicit_booking_request"
+        or (health == "confirms_earlier_offer" and a.yes("last_assistant_offered_health_call", yes))))
     booking_shaped_primary = primary in ("create_health_call", "none_answer_directly", "search_documents")
     health_wins = (
         (primary == "create_health_call"
@@ -144,14 +158,22 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
         and (not ai_route or (primary == "create_health_call" and intent == "clinical"))
     )
     if health_wins:
-        deterministic = True
+        route.append(max(
+            primary_conf if primary == "create_health_call" else 0.0,
+            health_conf if health in ("explicit_booking_request", "confirms_earlier_offer") else 0.0,
+            min(a.noul("last_assistant_offered_health_call"), a.noul("farmer_says_yes")) if offered else 0.0,
+        ))
         if not gates.signed_in:
             notes.append("The farmer wants a veterinary health visit but is not signed in / has no profile: explain that booking needs their registered profile and suggest contacting their milk society.")
+        elif not books:
+            notes.append(f"Do not book yet. Ask exactly: {HEALTH_OFFER_LINE}")
         else:
-            acct = _pick_account(a, gates)
+            acct = _pick_account(a, gates, arg_min)
             species = _species(a, gates)
             severity = a.choice("case_severity", "normal")
-            if acct is None or not (acct.union_code and acct.society_code and acct.farmer_code):
+            if acct is None and len(gates.accounts) > 1:
+                clarification = _ask_account(gates)
+            elif acct is None or not (acct.union_code and acct.society_code and acct.farmer_code):
                 notes.append("Health call requested but union/society/farmer codes are missing from the profile: ask the farmer for these codes (preserve leading zeros) before booking.")
             elif species is None:
                 clarification = "Ask once, briefly, whether the sick animal is a cow or a buffalo so the health call can be booked."
@@ -162,18 +184,22 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
                     "remark": query[:200],
                 }, min(a.conf("health_request") or 1.0, a.conf("species_for_booking") or 1.0), "rule")
     elif health == "describes_problem_only" and not ai_route and intent in ("clinical", "breeding", "nutrition") and "search_documents" in tools:
-        deterministic = True
+        route.append(health_conf)
         search("clinical" if intent == "clinical" else intent, a.conf("health_request"))
         if "create_health_call" in tools and gates.signed_in:
             notes.append(f"After the advice, ask exactly: {HEALTH_OFFER_LINE}")
     elif health == "declines_offer":
-        deterministic = True
+        route.append(health_conf)
         notes.append("The farmer declined the health call offer: acknowledge briefly and offer further help; do not book.")
 
     # ── AI call (insemination) ──────────────────────────────────────────────
     tech_reply = a.yes("last_assistant_asked_technician", yes)
     if ai_route or (tech_reply and a.choice("technician_selected", "not_stated") != "not_stated"):
-        deterministic = True
+        route.append(max(
+            a.conf("ai_request") if ai != "none" else 0.0,
+            primary_conf if primary == "create_ai_call" else 0.0,
+            a.conf("technician_selected") if tech_reply else 0.0,
+        ))
         if gates.ai_call_banned:
             notes.append(f"AI call booking is not allowed for this union. Tell the farmer exactly: `{UNION_BANNED_MESSAGE}` Do not ask which technician.")
         elif not gates.signed_in:
@@ -183,13 +209,17 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
         else:
             picked = a.choice("technician_selected", "not_stated")
             tech = next((t for t in gates.technicians if f"{t.name} ({t.mobile})" == picked), None)
+            if a.conf("technician_selected") < arg_min:
+                tech = None
             species = _species(a, gates)
-            acct = _pick_account(a, gates)
+            acct = _pick_account(a, gates, arg_min)
             if tech is None:
                 listing = "; ".join(f"{t.name} ({t.mobile})" for t in gates.technicians)
                 clarification = f"Ask which AI technician the farmer wants, showing only name and mobile number: {listing}." + ("" if species else " Also ask whether it is for a cow or a buffalo.")
             elif species is None:
                 clarification = f"Technician {tech.name} is selected. Ask once whether the insemination is for a cow or a buffalo."
+            elif acct is None and len(gates.accounts) > 1:
+                clarification = _ask_account(gates)
             elif acct is None or not (acct.union_code and acct.society_code and acct.farmer_code):
                 notes.append("Booking codes (union/society/farmer) are missing from the profile: tell the farmer their details are not available right now.")
             else:
@@ -201,8 +231,13 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
     # ── Loan ────────────────────────────────────────────────────────────────
     loan = a.choice("loan_request", "none") if "check_loan_eligibility" in tools else "none"
     if loan != "none" or primary == "check_loan_eligibility" or intent == "loan":
-        deterministic = True
-        if loan == "agrees_to_offer" or (a.yes("last_assistant_offered_loan", yes) and a.yes("farmer_says_yes", yes)):
+        route.append(max(
+            a.conf("loan_request") if loan != "none" else 0.0,
+            primary_conf if primary == "check_loan_eligibility" else 0.0,
+            a.conf("intent") if intent == "loan" else 0.0,
+        ))
+        # confirmed=True issues a code and sends an SMS: only after a real offer and a yes.
+        if a.yes("last_assistant_offered_loan", yes) and (loan == "agrees_to_offer" or a.yes("farmer_says_yes", yes)):
             add("check_loan_eligibility", {"confirmed": True}, a.conf("loan_request"), "rule")
         elif loan == "declines_offer" or (a.yes("last_assistant_offered_loan", yes) and a.yes("farmer_says_no", yes)):
             notes.append("The farmer declined the micro-loan offer: close politely, do not call the loan tool again.")
@@ -213,7 +248,7 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
 
     # ── Personal records ────────────────────────────────────────────────────
     if primary == "get_farmer_milk_collection_details" or (intent == "profile" and a.prob("primary_tool", "get_farmer_milk_collection_details") >= 0.3):
-        deterministic = True
+        route.append(primary_conf if primary == "get_farmer_milk_collection_details" else a.conf("intent"))
         if "get_farmer_milk_collection_details" in tools:
             period = a.choice("milk_period", "not_stated")
             start, end = C.period_to_range(period, query, default_days=settings.milk_default_range_days, max_days=31)
@@ -223,7 +258,7 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
         else:
             notes.append("Milk collection records need the farmer's signed-in profile, which is not available: say so briefly.")
     if primary == "get_farmer_bonus_amount":
-        deterministic = True
+        route.append(primary_conf)
         if "get_farmer_bonus_amount" in tools:
             add("get_farmer_bonus_amount", {}, primary_conf)
         else:
@@ -231,7 +266,8 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
 
     # ── Schemes ─────────────────────────────────────────────────────────────
     scope = a.choice("scheme_scope", "not_a_scheme_question") if ("get_union_scheme_data" in tools or "get_vistaar_scheme_info" in tools) else "not_a_scheme_question"
-    central = C.deterministic_scheme_code(query) or (a.choice("central_scheme", "none") if scope != "not_a_scheme_question" else "none")
+    alias_scheme = C.deterministic_scheme_code(query)
+    central = alias_scheme or (a.choice("central_scheme", "none") if scope != "not_a_scheme_question" else "none")
     if central == "none":
         central = None
     scheme_route = (
@@ -241,12 +277,15 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
             and a.conf("scheme_scope") >= 0.6 and primary == "none_answer_directly")
     )
     if scheme_route:
-        deterministic = True
+        route.append(1.0 if alias_scheme else max(
+            a.conf("intent") if intent == "scheme" else 0.0,
+            primary_conf if primary in ("get_union_scheme_data", "get_vistaar_scheme_info") else 0.0,
+            a.conf("scheme_scope") if scope != "not_a_scheme_question" else 0.0,
+        ))
         if central and "get_vistaar_scheme_info" in tools and scope != "farmer_union_schemes":
             add("get_vistaar_scheme_info", {"scheme_code": central}, a.conf("central_scheme") or 1.0)
-        if "get_union_scheme_data" in tools and scope in ("farmer_union_schemes", "both_or_general", "not_a_scheme_question") or (primary == "get_union_scheme_data"):
-            if "get_union_scheme_data" in tools:
-                add("get_union_scheme_data", {"scheme_name": None if scope == "both_or_general" else query[:120]}, a.conf("scheme_scope") or primary_conf)
+        if "get_union_scheme_data" in tools and (scope in ("farmer_union_schemes", "both_or_general", "not_a_scheme_question") or primary == "get_union_scheme_data"):
+            add("get_union_scheme_data", {"scheme_name": None if scope == "both_or_general" else query[:120]}, a.conf("scheme_scope") or primary_conf)
         if not any(c.name in ("get_union_scheme_data", "get_vistaar_scheme_info") for c in calls) and "search_documents" in tools:
             search("scheme", primary_conf)
 
@@ -254,7 +293,11 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
     want_mandi = primary == "get_vistaar_mandi_prices" or intent == "market" or a.yes("also_get_vistaar_mandi_prices", settings.extra_tool_noul_threshold)
     want_weather = primary == "get_vistaar_weather" or intent == "weather" or a.yes("also_get_vistaar_weather", settings.extra_tool_noul_threshold)
     if want_mandi and "get_vistaar_mandi_prices" in tools and intent != "cattle_trade":
-        deterministic = True
+        route.append(max(
+            primary_conf if primary == "get_vistaar_mandi_prices" else 0.0,
+            a.conf("intent") if intent == "market" else 0.0,
+            a.noul("also_get_vistaar_mandi_prices"),
+        ))
         commodity = a.choice("commodity", "none")
         words = {w.lower() for w in re.findall(r"[A-Za-z]+", query)}
         if commodity not in ("none", "other_named_in_message"):
@@ -278,7 +321,11 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
                 args["price_date"], args["price_date_to"] = _fmt(start), _fmt(end)
             add("get_vistaar_mandi_prices", args, min(a.conf("commodity") or 1.0, a.conf("place_named") or 1.0))
     if want_weather and "get_vistaar_weather" in tools:
-        deterministic = True
+        route.append(max(
+            primary_conf if primary == "get_vistaar_weather" else 0.0,
+            a.conf("intent") if intent == "weather" else 0.0,
+            a.noul("also_get_vistaar_weather"),
+        ))
         args = {}
         loc = _location(a)
         if loc:
@@ -288,7 +335,8 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
     # ── Soil health card ────────────────────────────────────────────────────
     shc = a.choice("shc_request", "none") if "get_vistaar_soil_health_card" in tools else "none"
     if shc != "none" or primary == "get_vistaar_soil_health_card":
-        deterministic = True
+        route.append(max(a.conf("shc_request") if shc != "none" else 0.0,
+                         primary_conf if primary == "get_vistaar_soil_health_card" else 0.0))
         if shc == "general_scheme_question" and "get_vistaar_scheme_info" in tools:
             add("get_vistaar_scheme_info", {"scheme_code": "shc"}, a.conf("shc_request"))
         elif shc == "follow_up_on_card_context" and gates.has_shc_context:
@@ -302,7 +350,7 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
 
     # ── Vet office lookup ───────────────────────────────────────────────────
     if primary == "find_nearby_vet_offices" and "find_nearby_vet_offices" in tools:
-        deterministic = True
+        route.append(primary_conf)
         span = a.choice("place_span", "none") if "place_span" in answers else "none"
         add("find_nearby_vet_offices", {"taluka": "" if span == "none" else span}, primary_conf)
 
@@ -314,7 +362,6 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
         elif primary == "search_documents" or intent in ("clinical", "nutrition", "breeding", "crop"):
             if "search_documents" in tools:
                 search(topic if topic in ("clinical", "nutrition", "breeding", "crop", "scheme", "general") else intent, primary_conf)
-                deterministic = deterministic or primary == "search_documents"
         elif intent == "language_switch":
             notes.append("The farmer asks to switch language: acknowledge briefly; the system translates output downstream. Do not search.")
         elif intent == "out_of_scope":
@@ -346,10 +393,11 @@ def decode(deps: FarmerContext, gates: TurnGates, answers: dict[str, Any], setti
                 moderation_confidence=moderation_conf)
 
     # ── Confidence gate (accuracy floor) ────────────────────────────────────
-    # A route decided only by Jev's tool/intent choice must clear the threshold;
-    # a route fixed by a slot answer or a code rule (alias map, profile facts) is exempt.
-    route_conf = max(primary_conf, a.conf("intent"))
-    if not deterministic and route_conf < settings.tool_choice_min_confidence:
+    # Every route taken must clear the threshold on the answer that picked it
+    # (a code rule such as the scheme alias map counts as 1.0). The retrieval /
+    # direct-answer fall-through is picked by primary_tool or intent.
+    route_conf = min(route) if route else max(primary_conf, a.conf("intent"))
+    if route_conf < settings.tool_choice_min_confidence:
         if settings.low_confidence_policy == "escalate_llm":
             plan.escalate = True
             plan.escalate_reason = f"route confidence {route_conf:.2f} < {settings.tool_choice_min_confidence}"

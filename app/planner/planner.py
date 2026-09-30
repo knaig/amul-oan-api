@@ -40,6 +40,6 @@ async def plan_turn(
     plan.jev_request_id = result.request_id
     logger.info(
         "jev plan intent=%s tools=%s escalate=%s conf=%.2f ms=%.0f tokens=%s",
-        plan.intent, [(c.name, c.args) for c in plan.tool_calls], plan.escalate, plan.confidence, plan.ms if hasattr(plan, 'ms') else plan.jev_ms, result.input_tokens,
+        plan.intent, [(c.name, c.args) for c in plan.tool_calls], plan.escalate, plan.confidence, plan.jev_ms, result.input_tokens,
     )
     return plan

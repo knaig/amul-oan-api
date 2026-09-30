@@ -289,3 +289,46 @@ def test_questions_respect_gates_and_state_is_compact():
     assert state["farmer_message"] == "onion price" and "Farmer Context" not in str(state)
     anon = _deps("bonus", signed_in=False)
     assert "get_farmer_bonus_amount" not in build_questions(anon, gates_for(anon, s))["primary_tool"]["criteria"]
+
+
+def test_jev_only_tool_route_below_threshold_escalates():
+    plan, _ = plan_for("bonus?", base_answers(intent=choice("profile", 0.3), primary_tool=choice("get_farmer_bonus_amount", 0.3)))
+    assert plan.escalate and "0.30" in plan.escalate_reason
+
+
+def test_jev_tool_pick_alone_never_books_a_health_call():
+    plan, _ = plan_for("my cow is limping", base_answers(
+        primary_tool=choice("create_health_call", 0.9), health_request=choice("describes_problem_only"), species_for_booking=choice("cow")))
+    assert "create_health_call" not in plan.tool_names()
+    assert any(HEALTH_OFFER_LINE in n for n in plan.compose_notes)
+
+
+def test_confirms_offer_without_an_offer_does_not_book():
+    plan, _ = plan_for("ok", base_answers(
+        intent=choice("services"), primary_tool=choice("none_answer_directly", 0.5),
+        health_request=choice("confirms_earlier_offer"), last_assistant_offered_health_call=noul(0.05), farmer_says_yes=noul(0.9)))
+    assert "create_health_call" not in plan.tool_names()
+
+
+def test_loan_yes_without_an_offer_never_confirms(monkeypatch):
+    import app.config
+    monkeypatch.setattr(app.config.settings, "loan_feature_enabled", True)
+    plan, _ = plan_for("yes", base_answers(intent=choice("loan"), loan_request=choice("agrees_to_offer"), last_assistant_offered_loan=noul(0.05), farmer_says_yes=noul(0.98)))
+    assert {"confirmed": True} not in [c.args for c in plan.tool_calls]
+
+
+def test_low_confidence_technician_pick_asks_again():
+    plan, _ = plan_for("Meena", base_answers(intent=choice("services"), primary_tool=choice("create_ai_call"), ai_request=choice("selects_technician"),
+                                             technician_selected=choice("Meena Shah (9999922222)", 0.3), species_for_booking=choice("cow"), last_assistant_asked_technician=noul(0.95)))
+    assert plan.tool_calls == [] and "Kiran Patel" in plan.clarification
+
+
+def test_multi_account_booking_asks_which_account():
+    deps = _deps("send a doctor, my cow collapsed")
+    deps.farmer_info = FARMER_INFO + FARMER_INFO.replace("## Farmer 1", "## Farmer 2").replace("00123", "00456").replace("# Farmer Context\n", "")
+    s = _settings()
+    gates = gates_for(deps, s)
+    assert len(gates.accounts) == 2
+    plan = decode(deps, gates, base_answers(primary_tool=choice("create_health_call"), health_request=choice("explicit_booking_request"),
+                                            species_for_booking=choice("cow"), account_for_booking=choice("not_stated")), s)
+    assert plan.tool_calls == [] and plan.clarification and "which dairy account" in plan.clarification

@@ -57,13 +57,22 @@ the places where request #1 *generated text or reasoned over its own tool output
 the thing a System One model does not do. They are handled by parallel fan-out plus an
 **accuracy floor**:
 
-* **Confidence gate.** When the route is decided only by Jev's `primary_tool`/`intent`
-  answer and its confidence is below `PLANNER_TOOL_MIN_CONFIDENCE`, the turn is handed to
-  the legacy two-request loop (`low_confidence_policy=escalate_llm`). Worst case for an
-  ambiguous message is therefore today's behaviour and today's latency. Slot-decided routes
-  (a confirmed booking, an alias-matched scheme) are exempt because they are deterministic.
-* **Jev unavailable** (no key, 429, timeout): same escalation. The farmer never sees an
-  error caused by the planner.
+* **Confidence gate.** Every route the decoder takes records the confidence of the answer
+  that picked it (`primary_tool`, `intent`, a slot such as `health_request`, an `also_*`
+  Noul). A code rule (the scheme alias map) counts as 1.0. When the weakest route is below
+  `PLANNER_TOOL_MIN_CONFIDENCE`, the turn is handed to the legacy two-request loop
+  (`low_confidence_policy=escalate_llm`); the plan's Jev time is then added on top of
+  today's latency.
+* **Writes need two signals.** `create_health_call` needs the farmer's own booking request
+  or a yes to an offer the last assistant message actually made; Jev's `primary_tool`
+  pick alone turns into the offer question. `check_loan_eligibility(confirmed=True)`
+  needs `last_assistant_offered_loan` plus a yes. Technician and account picks must clear
+  `PLANNER_ARG_MIN_CONFIDENCE`; a farmer with several dairy accounts is asked which one.
+* **Jev unavailable** (no key, 429, timeout) or a planner exception: same escalation, and
+  when Jev was also the safety check, the LLM moderation agent runs instead. The farmer
+  never sees an error caused by the planner. Note the SDK retries twice at 8 s each, so a
+  hung Jev can take ~24 s before the turn escalates (`TYPESAFE_TIMEOUT_S`, `RetryPolicy`
+  in `app/planner/jev.py`).
 * **Shadow mode** (`PLANNER_MODE=shadow`): production keeps answering with the legacy loop;
   Jev plans in the background and the tool-plan agreement is written to the trace store.
   This is how "no negative impact on accuracy" is verified on real traffic before flipping.
@@ -191,9 +200,22 @@ skips retrieval on the sick-cow message), agreement 13/14, agent-step TTFT p50 3
 p95 4.3 s vs 5.1 s, cost $0.0173 vs $0.0368 per turn (7.5k + 5.7k Jev tokens vs 17.9k). Flow A
 did not thrash this time; the loop is non-deterministic, which is the point.
 
-Caveats: n=10 per run on a laptop over the public internet; tool latencies are stand-in
-constants; ratings not yet collected. Re-run `scripts/planner_eval.py` with a larger set and
-real backends before quoting numbers externally.
+Caveats, all of which must be resolved before these numbers are quoted:
+
+* **Tuned on the test set.** Decoder defects were found and fixed on the same 10/14 queries
+  that are then reported as 10/10 and 14/14. Accuracy needs a held-out set labelled by
+  someone other than the decoder's author, or shadow-mode agreement on real traffic.
+* **The baseline had an unfixed bug.** `request_limit=10` in `ModelSettings` was ignored by
+  pydantic-ai (default 50), which allowed the 27-call bonus loop. `execution.stream` now
+  passes the agent's `request_limit` as `UsageLimits`; Flow A's cost and tail numbers above
+  predate that fix and should be re-measured.
+* **Cost ignores prompt caching.** Flow A's second request re-sends the same ~9k-token
+  prefix, which OpenAI bills at the cached-input rate. The tiktoken-at-list-price method
+  overstates the saving. The compose call now keeps the persona prompt as a stable
+  instructions prefix (tool results travel in the user turn) so Flow B can be cached too.
+* n=10 per run on a laptop over the public internet; tool latencies are stand-in
+  constants; ratings not yet collected. Re-run `scripts/planner_eval.py` with a larger set
+  and real backends.
 
 ### 4c. Which number to look at
 
@@ -211,6 +233,11 @@ moderation, TranslateGemma for post-translation, `PLANNER_CONCURRENT_MODERATION=
 (voice-style: the safety check overlaps the agent step, tokens are held until the verdict,
 side-effecting tools wait on it via `FarmerContext.ensure_in_scope`), farmer profile kept
 warm. Expected: TODAY ~2.5-3 s to first word, NEW ~1.7-2.2 s.
+
+"Jev overlaps moderation, so its critical-path cost is ~0" holds only with
+`PLANNER_MODERATION_SOURCE=llm`. With `=jev` there is no separate moderation call to hide
+behind, so the Jev request is on the critical path; report the two configurations
+separately.
 
 ### 4e. Latency work that came out of the lab (all behind flags, off in production by default)
 
@@ -288,3 +315,9 @@ Production rollout: `PLANNER_MODE=shadow` first (agreement rate, zero farmer imp
 * Commodity and district lists are closed sets by design (the tools already reject anything
   else). New names go in `assets/commodities.json` / `agents/tools/districts.py`.
 * Jev accuracy on non-English text is lower; the planner only ever sees English.
+* No recovery after planning: the compose call has no tools, so a plan that skipped a
+  needed tool produces a worse answer rather than an escalation.
+* `decode.py` restates the prompt's routing rules in code. A prompt change must be
+  mirrored there; shadow-mode agreement is the only drift detector.
+* Watch `escalation_rate` and `escalated_ttft_p50` per arm and for shadow in
+  `GET /api/lab/stats`: a high rate means the Jev arm is paying Jev + the full legacy loop.

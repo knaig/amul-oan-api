@@ -13,7 +13,7 @@ from typing import Any, AsyncIterator, Optional
 
 from agents.deps import FarmerContext
 from helpers.utils import get_logger
-from app.planner.compose import build_compose_agent
+from app.planner.compose import build_compose_agent, results_block
 from app.planner.config import PlannerSettings
 from app.planner.executor import execute
 from app.planner.models import Plan, StageRecorder, ToolResult
@@ -50,13 +50,17 @@ async def jev_agent_stream(
     """Drop-in for ``execution.stream(agent, ...)`` on the Jev arm."""
     stages.start("plan")
     plan_task = sink.pop("plan_task", None)
-    if plan_task is not None:
-        # Planning started before moderation (see app.services.chat); only the
-        # remaining wait is on the critical path.
-        plan = await plan_task
-    else:
-        pairs = history_pairs_from_messages(history, settings.history_pairs)
-        plan = await plan_turn(deps, pairs, settings, original_query=original_query)
+    try:
+        if plan_task is not None:
+            # Planning started before moderation (see app.services.chat); only the
+            # remaining wait is on the critical path.
+            plan = await plan_task
+        else:
+            pairs = history_pairs_from_messages(history, settings.history_pairs)
+            plan = await plan_turn(deps, pairs, settings, original_query=original_query)
+    except Exception as exc:  # a planner bug escalates the turn instead of failing it
+        logger.exception("jev plan failed; escalating")
+        plan = Plan(intent="unknown", tool_calls=[], escalate=True, escalate_reason=f"plan error: {type(exc).__name__}: {exc}", confidence=0.0)
     stages.end("plan")
     stages.meta["plan_overlapped_with_moderation"] = plan_task is not None
     stages.meta.update({
@@ -89,12 +93,14 @@ async def jev_agent_stream(
             stages.tool(r.name, r.args, r.ms, ok=r.ok, dry_run=r.dry_run, output_preview=r.output)
     sink["results"] = results
 
-    agent = build_compose_agent(deps, plan, results)
+    agent = build_compose_agent(deps)
+    prompt = f"{user_message}\n{results_block(plan, results)}"
+    history_start = len(new_messages)
     stages.start("compose")
     stages.meta["model_requests"] = 1
     first = True
     emitted: list[str] = []
-    async for chunk in execution.stream(agent, user_message, message_history=history, deps=deps,
+    async for chunk in execution.stream(agent, prompt, message_history=history, deps=deps,
                                         new_messages=new_messages, observer=stages):
         if first:
             stages.mark("compose_first_token")
@@ -110,6 +116,11 @@ async def jev_agent_stream(
                 stages.meta["ticket_appended"] = ticket
                 yield f"\nYour ticket number is {ticket}."
                 text += ticket
+    # The stored transcript keeps the farmer's turn only; results are per-turn input.
+    for msg in new_messages[history_start:]:
+        for part in getattr(msg, "parts", []):
+            if getattr(part, "part_kind", "") == "user-prompt" and part.content == prompt:
+                part.content = user_message
     stages.end("compose")
 
 
@@ -119,7 +130,8 @@ def start_plan_early(deps: FarmerContext, history: list, settings: PlannerSettin
     import asyncio
 
     pairs = history_pairs_from_messages(history, settings.history_pairs)
-    return asyncio.create_task(plan_turn(deps, pairs, settings, original_query=original_query))
+    # Copy: the live turn keeps mutating deps while the plan runs (as in shadow.start).
+    return asyncio.create_task(plan_turn(deps.model_copy(), pairs, settings, original_query=original_query))
 
 
 def legacy_tool_calls(new_messages: list) -> list[dict[str, Any]]:

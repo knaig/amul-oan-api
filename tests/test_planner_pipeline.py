@@ -56,7 +56,7 @@ def test_compose_agent_has_no_tools_and_carries_results():
     res = [ToolResult("search_documents", {"query": "cow fever"}, "1. Doc\nGive water", 12.0)]
     block = results_block(plan, res)
     assert "search_documents(query='cow fever')" in block and "Give water" in block and "Ask about booking." in block
-    agent = build_compose_agent(_deps(), plan, res)
+    agent = build_compose_agent(_deps())
     assert agent.name == "Amul AI Compose"
     assert not list(agent._function_toolset.tools) if hasattr(agent, "_function_toolset") else True
 
@@ -86,7 +86,7 @@ def test_jev_arm_plans_executes_then_composes_once(monkeypatch):
 
     monkeypatch.setattr(arms_mod, "plan_turn", fake_plan)
     monkeypatch.setattr(arms_mod, "execute", fake_execute)
-    monkeypatch.setattr(arms_mod, "build_compose_agent", lambda deps, plan_, results: SimpleNamespace(name="Amul AI Compose"))
+    monkeypatch.setattr(arms_mod, "build_compose_agent", lambda deps: SimpleNamespace(name="Amul AI Compose"))
     stages, sink = StageRecorder(), {}
 
     async def go():
@@ -115,7 +115,7 @@ def test_jev_arm_appends_a_dropped_ticket_number(monkeypatch):
 
     monkeypatch.setattr(arms_mod, "plan_turn", fake_plan)
     monkeypatch.setattr(arms_mod, "execute", fake_execute)
-    monkeypatch.setattr(arms_mod, "build_compose_agent", lambda deps, plan_, results: SimpleNamespace(name="Amul AI Compose"))
+    monkeypatch.setattr(arms_mod, "build_compose_agent", lambda deps: SimpleNamespace(name="Amul AI Compose"))
     stages, sink = StageRecorder(), {}
 
     async def go():
@@ -188,7 +188,7 @@ def _drive_chat(monkeypatch, *, planner, compose_chunks=("Give clean water daily
     monkeypatch.setattr(arms_mod, "plan_turn", _fake_plan)
     monkeypatch.setattr(arms_mod, "execute", _fake_execute)
     monkeypatch.setattr(chat_service, "get_session_shc_context", _noop)
-    monkeypatch.setattr(arms_mod, "build_compose_agent", lambda deps, plan, results: SimpleNamespace(name="Amul AI Compose", iter=_compose_iter))
+    monkeypatch.setattr(arms_mod, "build_compose_agent", lambda deps: SimpleNamespace(name="Amul AI Compose", iter=_compose_iter))
 
     async def _record(**fields):
         seen.append(("trace", fields["arm"], fields["tools_json"]))
@@ -324,3 +324,52 @@ def test_planner_settings_merge_and_env(monkeypatch):
     assert s.mode == "shadow" and s.disabled_tools == ["create_ai_call", "check_loan_eligibility"]
     m = s.merged({"search_top_k": 3, "unknown": 1, "yes_threshold": None})
     assert m.search_top_k == 3 and m.yes_threshold == s.yes_threshold
+
+
+def test_compose_results_go_in_the_prompt_not_the_stored_history(monkeypatch):
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    plan = Plan(intent="clinical", tool_calls=[ToolCall("search_documents", {"query": "cow fever"})])
+    seen_prompts = []
+
+    async def fake_plan(deps, pairs, settings, original_query=None, gates=None):
+        return plan
+
+    async def fake_execute(plan_, deps, settings, stages=None):
+        return [ToolResult("search_documents", {"query": "cow fever"}, "Give water", 10.0)]
+
+    class _Exec:
+        async def stream(self, agent, prompt, *, message_history, deps, new_messages, observer=None):
+            seen_prompts.append(prompt)
+            new_messages.append(ModelRequest(parts=[UserPromptPart(content=prompt)]))
+            yield "ok"
+
+    monkeypatch.setattr(arms_mod, "plan_turn", fake_plan)
+    monkeypatch.setattr(arms_mod, "execute", fake_execute)
+    monkeypatch.setattr(arms_mod, "build_compose_agent", lambda deps: SimpleNamespace(name="Amul AI Compose"))
+    new_messages = []
+
+    async def go():
+        return [c async for c in arms_mod.jev_agent_stream(deps=_deps(), user_message="**User:** fever", history=[], execution=_Exec(),
+                                                           new_messages=new_messages, legacy_agent=None, settings=PlannerSettings(),
+                                                           stages=StageRecorder(), sink={})]
+
+    asyncio.run(go())
+    assert "Give water" in seen_prompts[0] and seen_prompts[0].startswith("**User:** fever")
+    assert new_messages[0].parts[0].content == "**User:** fever"
+
+
+def test_plan_crash_escalates_instead_of_failing_the_turn(monkeypatch):
+    async def boom(*a, **k):
+        raise KeyError("bad answer")
+
+    monkeypatch.setattr(arms_mod, "plan_turn", boom)
+    stages = StageRecorder()
+
+    async def go():
+        return "".join([c async for c in arms_mod.jev_agent_stream(deps=_deps(), user_message="q", history=[], execution=_fake_execution([]),
+                                                                   new_messages=[], legacy_agent=SimpleNamespace(name="legacy"), settings=PlannerSettings(),
+                                                                   stages=stages, sink={})])
+
+    assert asyncio.run(go()) == "Hello farmer."
+    assert stages.meta["escalated"] and "plan error" in stages.meta["escalate_reason"]

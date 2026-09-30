@@ -629,8 +629,12 @@ async def stream_chat_messages(
                 stages.meta["moderation_source"] = "jev"
 
                 async def _verdict_from_plan():
-                    plan = await _plan_task_for_verdict
-                    if not plan.escalate and plan.moderation_category:
+                    try:
+                        plan = await _plan_task_for_verdict
+                    except Exception as exc:  # a planner bug must not also skip the safety check
+                        logger.warning("jev plan failed, moderation falls back to llm: %s", exc)
+                        plan = None
+                    if plan is not None and not plan.escalate and plan.moderation_category:
                         cat, action = plan.moderation_category, plan.moderation_action or ""
                         stages.meta["moderation_confidence"] = plan.moderation_confidence
                     else:

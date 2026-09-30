@@ -1,4 +1,7 @@
-"""The single generative call: same persona prompt, tool results supplied, no tools."""
+"""The single generative call: same persona prompt, tool results supplied, no tools.
+
+The persona prompt is the agent's instructions (stable across turns, so the provider
+can cache it); the per-turn results block travels in the user prompt."""
 from __future__ import annotations
 
 from pydantic_ai import Agent
@@ -53,8 +56,8 @@ def results_block(plan: Plan, results: list[ToolResult]) -> str:
     return "\n".join(lines)
 
 
-def build_compose_agent(deps: FarmerContext, plan: Plan, results: list[ToolResult]) -> Agent:
-    instructions = base_instructions(deps) + "\n" + results_block(plan, results)
+def build_compose_agent(deps: FarmerContext) -> Agent:
+    instructions = base_instructions(deps)
     max_tokens = _doctor_max_output_tokens() if deps.persona == "doctor" else _agrinet_max_output_tokens()
     return Agent(
         model=None,

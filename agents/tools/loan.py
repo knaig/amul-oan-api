@@ -133,6 +133,11 @@ async def check_loan_eligibility(ctx: RunContext[FarmerContext], confirmed: bool
     from app.planner.side_effects import DRY_RUN_SIDE_EFFECTS, dry_run_message
     if DRY_RUN_SIDE_EFFECTS.get():
         return dry_run_message("check_loan_eligibility", {"confirmed": confirmed})
+    # confirmed=True issues a code and sends an SMS: block on the moderation verdict
+    # first, as the booking tools do. The offer step (confirmed=False) writes nothing.
+    if confirmed and not await ctx.deps.ensure_in_scope():
+        logger.info("Loan confirmation blocked: query failed moderation; session=%s", ctx.deps.session_id)
+        return "This helpline only handles dairy farming and animal husbandry questions."
     accounts = await _resolve_accounts(ctx)
     name: Optional[str] = None
     for acct in accounts:

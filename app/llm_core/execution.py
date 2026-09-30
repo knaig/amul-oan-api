@@ -821,11 +821,16 @@ class ExecutionContext:
             out_chars: list[str] = []
             from app.planner.side_effects import TOKEN_SINK, count_tokens
             _tok = TOKEN_SINK.set(observer) if observer is not None else None
+            # pydantic-ai ignores request_limit inside ModelSettings (its own default
+            # is 50); enforce the agent's configured bound on the loop itself.
+            from pydantic_ai.usage import UsageLimits
+            _limit = (getattr(agent, "model_settings", None) or {}).get("request_limit")
             async with agent.iter(
                 user_prompt=prompt,
                 message_history=message_history,
                 deps=deps,
                 model=tier.handle,
+                usage_limits=UsageLimits(request_limit=_limit) if _limit else None,
             ) as agent_run:
                 async for node in agent_run:
                     node_kind = type(node).__name__
