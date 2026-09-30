@@ -1,0 +1,14 @@
+{"query": "મારી ગાય ને તાવ છે અને ખાતી નથી", "query_en": "My cow has fever and is not eating", "expected_tools": ["search_documents"]}
+{"query": "આજે જુનાગઢ માં ડુંગળી નો ભાવ શું છે", "query_en": "What is today's onion price in Junagadh", "expected_tools": ["get_vistaar_mandi_prices"]}
+{"query": "કાલે વરસાદ પડશે?", "query_en": "Will it rain tomorrow?", "expected_tools": ["get_vistaar_weather"]}
+{"query": "કિસાન ક્રેડિટ કાર્ડ વિશે માહિતી આપો", "query_en": "Give me information about Kisan Credit Card", "expected_tools": ["get_vistaar_scheme_info"]}
+{"query": "મારું બોનસ કેટલું છે?", "query_en": "How much is my bonus?", "expected_tools": ["get_farmer_bonus_amount"]}
+{"query": "ગયા મહિનાનું મારું દૂધ બતાવો", "query_en": "Show my milk (collection) for last month", "expected_tools": ["get_farmer_milk_collection_details"]}
+{"query": "મારી ભેંસ પડી ગઈ છે ડોક્ટર મોકલો", "query_en": "My buffalo has collapsed, send a doctor", "expected_tools": ["create_health_call"]}
+{"query": "તમે કેમ છો", "query_en": "How are you", "expected_tools": []}
+{"query": "ક્રિકેટ મેચ કોણ જીત્યું", "query_en": "Who won the cricket match", "expected_tools": []}
+{"query": "ગાય વેચવી છે", "query_en": "I want to sell a cow", "expected_tools": ["search_documents"]}
+{"query": "મારી ગાય ગરમીમાં છે, બીજદાન બુક કરો", "query_en": "My cow is in heat, book insemination", "expected_tools": []}
+{"query": "મારો સોઇલ હેલ્થ કાર્ડ બતાવો 2024-25", "query_en": "Show my soil health card 2024-25", "expected_tools": ["get_vistaar_soil_health_card"]}
+{"query": "મારા યુનિયનની વીમા યોજના કઈ છે", "query_en": "What insurance schemes does my union offer", "expected_tools": ["get_union_scheme_data"], "mobile": "9898989898"}
+{"query": "નજીકનું પશુ દવાખાનું ક્યાં છે", "query_en": "Where is the nearest veterinary dispensary", "expected_tools": ["find_nearby_vet_offices"]}

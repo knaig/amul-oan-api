@@ -70,9 +70,10 @@ the thing a System One model does not do. They are handled by parallel fan-out p
   `PLANNER_ARG_MIN_CONFIDENCE`; a farmer with several dairy accounts is asked which one.
 * **Jev unavailable** (no key, 429, timeout) or a planner exception: same escalation, and
   when Jev was also the safety check, the LLM moderation agent runs instead. The farmer
-  never sees an error caused by the planner. Note the SDK retries twice at 8 s each, so a
-  hung Jev can take ~24 s before the turn escalates (`TYPESAFE_TIMEOUT_S`, `RetryPolicy`
-  in `app/planner/jev.py`).
+  never sees an error caused by the planner. The Jev client (`app/planner/jev.py`) uses
+  `httpx2`, the SDK's own HTTP library, so connection errors and timeouts become the SDK's
+  retryable errors; retries share one budget of `TYPESAFE_TIMEOUT_S` (attempts + backoff).
+  A quick blip is retried; a hung request is not, so the turn escalates after ~8 s.
 * **Shadow mode** (`PLANNER_MODE=shadow`): production keeps answering with the legacy loop;
   Jev plans in the background and the tool-plan agreement is written to the trace store.
   This is how "no negative impact on accuracy" is verified on real traffic before flipping.

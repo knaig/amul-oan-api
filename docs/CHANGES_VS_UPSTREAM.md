@@ -1,9 +1,9 @@
 # Changes in this fork vs upstream OpenAgriNet/amul-oan-api
 
-- **Fork:** `knaig/amul-oan-api`, branch `main` at `961671b` (2026-09-30)
+- **Fork:** `knaig/amul-oan-api`, branch `main` (2026-09-30)
 - **Upstream:** `OpenAgriNet/amul-oan-api`, branch `main`
 - **Forked from:** `1c618e8` (2026-09-21, "Merge pull request #301 from OpenAgriNet/feat/chat-vet-office-lookup")
-- **Fork adds:** 22 commits, 43 files, +5370 / -96 lines (vs the fork point)
+- **Fork adds:** 24 commits, ~52 files (vs the fork point; regenerate below for exact numbers)
 - **Upstream has moved on:** 42 commits on upstream `main` are not in this fork
 
 Regenerate the numbers with:
@@ -57,6 +57,8 @@ measurements: `docs/JEV_PLANNER.md`.
 | `5f24d7f` | planner: identifiers verbatim rule + ticket safety net on the Jev arm |
 | `8ee70cf` | lab: question-language switch on the Simple view, English default |
 | `961671b` | planner review fixes: real confidence gate, two-signal writes, enforced loop limit |
+| `b3edfae` | docs: this file |
+| (next) | keep negation in search keywords, override flag off in production, Jev client on httpx2 with a retry budget, lab scripts committed |
 
 ## 3. Changes to upstream files
 
@@ -80,7 +82,7 @@ Each change is tagged by its effect on a default deployment (no planner env vars
 | `main.py` | +17 / -1 | Mounts the `lab` router. Starts a 25 s Jev keep-alive ping when a TypeSafe key is set and the planner or lab can be used. | Lab returns 404 when `PLANNER_LAB_ENABLED` is off (default: off in production). Ping: FLAG (`TYPESAFE_API_KEY` + mode/lab). |
 | `requirements.txt` | +4 | `typesafe-sdk>=0.7.1`, `aiosqlite>=0.20.0`. | New dependencies installed. |
 | `example.env` | +23 | Documents every `PLANNER_*` / `TYPESAFE_*` variable. | none |
-| `.gitignore` | +5 | `planner_traces.db*`, `.lab/`, `dump.rdb`. | none |
+| `.gitignore` | +15 | Ignores `planner_traces.db*`, `.lab/`, `dump.rdb`; un-ignores the lab scripts under `scripts/` (upstream ignores `/scripts/*`). | none |
 | `tests/conftest.py` | +14 | Pins planner and health flags so a local lab `.env` cannot change the suite. | tests only |
 
 ## 4. New files
@@ -107,7 +109,10 @@ Each change is tagged by its effect on a default deployment (no planner env vars
 | `assets/commodities.json` | 199 Agmarknet commodity names for the mandi Choice |
 | `pipeline.lab.yaml`, `pipeline.server.yaml`, `.env.server.example` | Model profiles for the lab and the on-prem "2-3 s" configuration |
 | `docs/JEV_PLANNER.md` | Design, feasibility table, measurements, caveats, rollout |
-| `tests/test_planner_decode.py`, `test_planner_pipeline.py`, `test_planner_candidates.py` | 56 planner tests |
+| `tests/test_planner_decode.py`, `test_planner_pipeline.py`, `test_planner_candidates.py` | 59 planner tests |
+| `scripts/beckn_standin.py`, `scripts/standin_data.py` | Beckn / ONIX bridge / PashuGPT stand-in on :3100 with synthetic farmers, animals, KB, schemes, mandi, weather. **Scheme and KB texts are made-up fixture data tagged with real source names; do not quote them as facts.** |
+| `scripts/lab_up.sh`, `scripts/lab_down.sh` | Start / stop Redis + stand-in + app for the lab |
+| `scripts/planner_eval.py`, `planner_report.py`, `lab_multiturn.py`, `planner_eval_sample.jsonl` | Batch A/B eval, report, multi-turn scenarios, the 14 sample questions |
 
 ## 5. Configuration added
 
@@ -117,7 +122,7 @@ All default to upstream behaviour.
 |---|---|---|
 | `PLANNER_MODE` | `llm` | `llm` = upstream loop; `jev` = Jev arm; `shadow` = upstream answers, Jev plans in the background |
 | `TYPESAFE_API_KEY`, `TYPESAFE_MODEL`, `TYPESAFE_TIMEOUT_S` | unset, `jev-latest`, `8` | Jev access |
-| `PLANNER_OVERRIDE_ENABLED` | **`true`** | honour `ChatRequest.planner` per request |
+| `PLANNER_OVERRIDE_ENABLED` | on only when `ENVIRONMENT != production` | honour `ChatRequest.planner` per request |
 | `PLANNER_TOOL_MIN_CONFIDENCE`, `PLANNER_ARG_MIN_CONFIDENCE`, `PLANNER_YES_THRESHOLD`, `PLANNER_EXTRA_TOOL_THRESHOLD` | 0.45, 0.40, 0.60, 0.70 | decoder thresholds |
 | `PLANNER_LOW_CONFIDENCE_POLICY` | `escalate_llm` | what a low-confidence plan does |
 | `PLANNER_SEARCH_TOP_K`, `PLANNER_SEARCH_FANOUT`, `PLANNER_MILK_DEFAULT_RANGE_DAYS`, `PLANNER_HISTORY_PAIRS` | 8, 2, 7, 3 | retrieval and state shaping |
@@ -134,19 +139,17 @@ All default to upstream behaviour.
    moderation wait is also always on but inert without a moderation task. Each is small
    and arguably a fix, but they are production behaviour changes and belong in their own
    upstream PR, separate from the planner.
-2. **`PLANNER_OVERRIDE_ENABLED` defaults to `true`.** Any client can send `planner=jev` on
-   a chat request and get the Jev arm, if a TypeSafe key is configured. Set it to `false`
-   in production, or change the default, before deploying with a key.
+2. **`PLANNER_OVERRIDE_ENABLED`** now defaults to off in production (it was `true`, which let
+   any client choose the Jev arm per request). `.env.server.example` still turns it on for a
+   lab server; drop that line for a production deployment.
 3. **Upstream is 42 commits ahead.** `app/services/chat.py` is the most likely conflict
    (+384 / -91 here). Rebase or merge upstream `main` before any PR.
-4. **Lab scripts are missing from the repo.** `docs/JEV_PLANNER.md` references
-   `scripts/beckn_standin.py`, `scripts/lab_up.sh`, `scripts/lab_down.sh`,
-   `scripts/planner_eval.py` and `scripts/planner_eval_sample.jsonl`. `scripts/*` is
-   gitignored upstream, and the files are not on disk in this checkout either, so the lab
-   and the reported measurements cannot be reproduced from the repo as it stands.
+4. **Lab scripts are now in the fork.** They were on disk but never committed, because
+   upstream ignores `/scripts/*`; the fork's `.gitignore` now un-ignores them by name. An
+   upstream PR would have to decide whether they belong in `scripts/`.
 5. **Accuracy and cost figures are not yet reliable.** They were measured on the questions
    the decoder was tuned on, before the loop-limit fix, and without prompt-caching
    discounts. See the caveats in `docs/JEV_PLANNER.md` section 4b.
-6. **Test status:** 1348 pass, 2 skipped. 5 failures (glossary parity for bn/mr/pa, the Hindi pipeline,
+6. **Test status:** 1351 pass, 2 skipped. 5 failures (glossary parity for bn/mr/pa, the Hindi pipeline,
    the Beckn AI technician mapper) fail identically before and after the fork's last commit,
    and none are in files the fork touches.

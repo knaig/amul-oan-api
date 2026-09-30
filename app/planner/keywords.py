@@ -9,7 +9,7 @@ _STOPWORDS = set("""a an the and or but of for to in on at by with from about in
 were be been being am do does did done have has had having what which who whom whose how when where why
 my me mine i we our ours us you your yours it its this that these those there here please tell give show
 get want wants need needs know can could would should will shall may might much many some any also just
-very really so than then too as if because while whether not no yes ok okay hi hello namaste sarlaben
+very really so than then too as if because while whether yes ok okay hi hello namaste sarlaben
 sarla ben amul ai assistant question ask asking told say said sir madam bhai ji""".split())
 
 _TOPIC_EXPANSION = {
@@ -25,8 +25,16 @@ _SPECIES_WORDS = ("cow", "cows", "buffalo", "buffaloes", "buffalos", "calf", "ca
                   "sheep", "poultry", "hen", "chicken", "bull", "bullock", "heifer", "cattle", "animal", "animals")
 
 
+# Negation carries the symptom ("not eating", "no milk"), so it is kept as a keyword.
+_NEGATION = [(re.compile(r"\b(can't|cannot)\b", re.I), "can not"), (re.compile(r"\bwon't\b", re.I), "will not"),
+             (re.compile(r"n't\b", re.I), " not")]
+
+
 def keywordize(text: str, max_tokens: int = 12) -> str:
-    tokens = re.findall(r"[A-Za-z][A-Za-z\-]*|\d+", text or "")
+    text = text or ""
+    for pattern, repl in _NEGATION:
+        text = pattern.sub(repl, text)
+    tokens = re.findall(r"[A-Za-z][A-Za-z\-]*|\d+", text)
     kept: list[str] = []
     seen: set[str] = set()
     for tok in tokens:

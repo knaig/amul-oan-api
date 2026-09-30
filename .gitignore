@@ -200,3 +200,13 @@ cython_debug/
 planner_traces.db*
 .lab/
 dump.rdb
+
+# Planner lab: stand-in network, lab start/stop, eval scripts (fork only; see docs/JEV_PLANNER.md 5a)
+!/scripts/beckn_standin.py
+!/scripts/standin_data.py
+!/scripts/lab_up.sh
+!/scripts/lab_down.sh
+!/scripts/lab_multiturn.py
+!/scripts/planner_eval.py
+!/scripts/planner_eval_sample.jsonl
+!/scripts/planner_report.py

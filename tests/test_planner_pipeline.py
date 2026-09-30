@@ -373,3 +373,47 @@ def test_plan_crash_escalates_instead_of_failing_the_turn(monkeypatch):
 
     assert asyncio.run(go()) == "Hello farmer."
     assert stages.meta["escalated"] and "plan error" in stages.meta["escalate_reason"]
+
+
+def test_planner_override_is_off_in_production_by_default(monkeypatch):
+    from app.planner import config as cfg
+
+    values = {"ENVIRONMENT": "production"}
+    monkeypatch.setattr(cfg, "get_config_value", lambda name, default=None: values.get(name, default))
+    assert not cfg.planner_override_enabled()
+    values["ENVIRONMENT"] = "development"
+    assert cfg.planner_override_enabled()
+    values.update(ENVIRONMENT="production", PLANNER_OVERRIDE_ENABLED="true")
+    assert cfg.planner_override_enabled()
+
+
+def test_jev_client_retries_blips_but_not_a_hang(monkeypatch):
+    import httpx2
+    from app.planner import jev
+
+    calls = []
+    hang = {"s": 0.0}
+
+    async def handler(request):
+        calls.append(1)
+        await asyncio.sleep(hang["s"])
+        raise httpx2.ConnectError("blip", request=request)
+
+    real_client = httpx2.AsyncClient
+    monkeypatch.setattr(httpx2, "AsyncClient", lambda **kw: real_client(transport=httpx2.MockTransport(handler), **{k: v for k, v in kw.items() if k != "limits"}))
+    monkeypatch.setattr(jev, "typesafe_api_key", lambda: "k")
+    monkeypatch.setattr(jev.PlannerSettings, "from_env", classmethod(lambda cls: PlannerSettings(typesafe_timeout_s=2.0)))
+
+    def run():
+        jev._client = None
+        calls.clear()
+        with pytest.raises(jev.JevUnavailable):
+            asyncio.run(jev.evaluate("s", {"q": {"type": "noul", "instructions": "x"}}, model="jev-latest", timeout_s=5))
+        return len(calls)
+
+    try:
+        assert run() == 3          # fast connection errors: initial + 2 retries
+        hang["s"] = 2.05
+        assert run() == 1          # an attempt that used up the budget is not retried
+    finally:
+        jev._client = None

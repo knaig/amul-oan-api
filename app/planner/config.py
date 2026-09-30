@@ -116,13 +116,17 @@ def typesafe_api_key() -> Optional[str]:
     return get_config_value("TYPESAFE_API_KEY")
 
 
+def _non_production() -> bool:
+    return str(get_config_value("ENVIRONMENT", "production") or "production").lower() != "production"
+
+
 def planner_override_enabled() -> bool:
-    return _bool("PLANNER_OVERRIDE_ENABLED", True)
+    # Off in production unless set: otherwise any client could pick the arm per request.
+    return _bool("PLANNER_OVERRIDE_ENABLED", _non_production())
 
 
 def lab_enabled() -> bool:
-    env = str(get_config_value("ENVIRONMENT", "production") or "production").lower()
-    return _bool("PLANNER_LAB_ENABLED", env != "production")
+    return _bool("PLANNER_LAB_ENABLED", _non_production())
 
 
 def trace_db_url() -> str:

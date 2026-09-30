@@ -45,3 +45,10 @@ def test_closed_sets_have_escapes():
     assert set(C.scheme_options()) >= {"kcc", "pmfby", "none"}
     assert "other_named_in_message" in C.commodity_options() and len(C.commodity_options()) <= 255
     assert C.deterministic_scheme_code("પાક વીમો") == "pmfby"
+
+
+def test_keywordize_keeps_negation():
+    assert keywordize("My cow has fever and is not eating since yesterday") == "cow fever not eating since yesterday"
+    assert keywordize("buffalo gives no milk") == "buffalo gives no milk"
+    assert keywordize("my cow doesn't stand up") == "cow not stand up"
+    assert "not" in keywordize("she can't stand") and "not" in keywordize("it won't heal")

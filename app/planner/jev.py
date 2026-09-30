@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from helpers.utils import get_logger
-from app.planner.config import typesafe_api_key
+from app.planner.config import PlannerSettings, typesafe_api_key
 
 logger = get_logger(__name__)
 
@@ -42,18 +42,24 @@ def _get_client(timeout_s: float) -> Any:
     if not key:
         raise JevUnavailable("TYPESAFE_API_KEY is not set")
     if _client is None:
-        import httpx
+        # The SDK is built on httpx2 and only maps httpx2 errors to its retryable
+        # timeout / connection errors; a plain httpx client skips all of that.
+        import httpx2
+        # One budget for attempts + backoff: a hung request is not retried, so a
+        # stuck Jev escalates after ~TYPESAFE_TIMEOUT_S instead of ~3x that.
+        # Read from env, not the caller: the keepalive ping may create the client.
+        budget_s = PlannerSettings.from_env().typesafe_timeout_s
         # httpx drops idle keep-alive connections after 5 s by default; a turn
         # arrives less often than that, so every plan paid a fresh TLS handshake
         # (~0.9 s from India). Keep the connection for a long time instead.
-        http_client = httpx.AsyncClient(
-            timeout=timeout_s,
-            limits=httpx.Limits(max_keepalive_connections=8, max_connections=32, keepalive_expiry=600.0),
+        http_client = httpx2.AsyncClient(
+            timeout=budget_s,
+            limits=httpx2.Limits(max_keepalive_connections=8, max_connections=32, keepalive_expiry=600.0),
         )
         _client = AsyncTypeSafeClient(
             api_key=key,
-            timeout=timeout_s,
-            retry=RetryPolicy(max_retries=2) if RetryPolicy else None,
+            timeout=budget_s,
+            retry=RetryPolicy(max_retries=2, timeout=budget_s) if RetryPolicy else None,
             http_client=http_client,
         )
     return _client
