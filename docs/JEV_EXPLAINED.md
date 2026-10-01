@@ -8,7 +8,7 @@ A plain-language guide for non-technical readers. The technical design is in
 
 ## The short version
 
-Jev replaces the slowest thinking step of the assistant with a fast multiple-choice step, saving about half a second per question. Today the assistant asks a large AI model (GPT-4.1) twice for every farmer question: once to decide what information to look up, and once to write the answer. With Jev, a small specialised model called Jev answers a set of multiple-choice questions about the farmer's message instead of the first call. Ordinary code turns those answers into the lookups. The large model is then asked only once, to write the answer.
+Jev replaces the slowest thinking step of the assistant with a fast multiple-choice step, saving about 0.7 seconds per question. Today the assistant asks a large AI model (GPT-4.1) twice for every farmer question: once to decide what information to look up, and once to write the answer. With Jev, a small specialised model called Jev answers a set of multiple-choice questions about the farmer's message instead of the first call. Ordinary code turns those answers into the lookups. The large model is then asked only once, to write the answer.
 
 The new way is off by default and runs side by side with today's way in a test screen (the lab). When Jev is not sure, the system falls back to today's way, so a hard question is never answered worse than today.
 
@@ -84,12 +84,11 @@ The deciding step drops from about 1.3 seconds to about 0.6 seconds, and the cos
 
 | Measure | Today (LLM) | With Jev | Runs measured |
 | --- | --- | --- | --- |
-| Decide what to look up, typical (median) | 1.32 s | 0.63 s | 14 LLM, 20 Jev |
-| Decide what to look up, slow case (9 in 10 faster than this) | 2.58 s | 0.82 s | same |
-| Decide + write up to the first word, typical | 3.2 s | 2.1 s | 14 LLM, 19 Jev |
+| Decide what to look up, typical (median) | 1.33 s | 0.62 s | 20 LLM, 25 Jev |
+| Write up to the first word, typical | 1.20 s | 1.28 s | same |
 | AI cost per question (list prices, GPT-4.1) | about $0.037 | about $0.017 | estimate from request sizes |
 
-**What does not change:** translating the question, the safety check, fetching the data and translating the answer take the same time on both sides. The lab greys those steps out so they are not counted as a saving. Writing the answer also takes about the same time on both sides, because the same model does it.
+**What does not change:** translating the question, the safety check, fetching the data and translating the answer take the same time on both sides. The lab greys those steps out so they are not counted as a saving. Writing the answer also takes about the same time on both sides, because the same model does it. So the time the farmer saves is about the decide saving: roughly 0.7 seconds on a typical question. It varies by question: on the onion price question, asked the same way on both sides, deciding went from 1.6 s to 0.36 s. Do not subtract typical totals from different sets of questions; compare the same questions side by side, as the lab's attempts feature does.
 
 **Read these numbers with care.** The samples are small, from one laptop over the public internet. The cost estimate uses list prices and ignores OpenAI's discount for repeated text, which today's way benefits from more, so the real cost saving is smaller than shown. Single questions vary a lot: one recorded question took 6.3 seconds to decide on the LLM side because OpenAI was slow at that moment (its safety check was 6 times slower than usual too). Always compare typical values over many attempts, never one question.
 
