@@ -417,3 +417,56 @@ def test_jev_client_retries_blips_but_not_a_hang(monkeypatch):
         assert run() == 1          # an attempt that used up the budget is not retried
     finally:
         jev._client = None
+
+
+def _search_plan():
+    return Plan(intent="clinical", tool_calls=[
+        ToolCall("search_documents", {"query": "buffalo", "top_k": 8}),
+        ToolCall("search_documents", {"query": "buffalo symptoms treatment", "top_k": 8}),
+    ])
+
+
+def _run_apply(plan, result=None, delay=0.0, wait_s=1.0, raises=None):
+    from app.planner import query_writer
+
+    async def go():
+        async def fake():
+            await asyncio.sleep(delay)
+            if raises:
+                raise raises
+            return result
+        task = asyncio.create_task(fake())
+        stages = StageRecorder()
+        await query_writer.apply(plan, task, wait_s=wait_s, top_k=8, stages=stages)
+        await asyncio.sleep(0)
+        return task, stages
+    return asyncio.run(go())
+
+
+def test_written_query_goes_first_and_one_keyword_variant_stays():
+    plan = _search_plan()
+    _, stages = _run_apply(plan, {"query": "mastitis treatment buffalo", "raw": "x", "ms": 300.0})
+    assert [c.args["query"] for c in plan.tool_calls] == ["mastitis treatment buffalo", "buffalo"]
+    assert plan.tool_calls[0].source == "query_writer" and stages.meta["query_writer"]["used"]
+
+
+def test_no_search_cancels_the_writer():
+    plan = Plan(intent="market", tool_calls=[ToolCall("get_vistaar_mandi_prices", {"commodity_name": "Onion"})])
+    task, _ = _run_apply(plan, {"query": "x"}, delay=5)
+    assert task.cancelled() and plan.tool_names() == ["get_vistaar_mandi_prices"]
+
+
+def test_late_or_failed_or_invalid_writer_leaves_keyword_queries():
+    for kwargs in ({"result": {"query": "late"}, "delay": 0.5, "wait_s": 0.05},
+                   {"raises": RuntimeError("model down")},
+                   {"result": {"query": None, "raw": "I can only answer farming questions"}}):
+        plan = _search_plan()
+        _, stages = _run_apply(plan, **kwargs)
+        assert [c.args["query"] for c in plan.tool_calls] == ["buffalo", "buffalo symptoms treatment"]
+        assert stages.meta["query_writer"]["used"] is False
+
+
+def test_query_prompt_carries_the_conversation():
+    from app.planner.query_writer import build_prompt
+    p = build_prompt("And what about for a buffalo?", [("My cow has mastitis", "Strip the quarter and call the vet.")])
+    assert "mastitis" in p and p.endswith("And what about for a buffalo?")

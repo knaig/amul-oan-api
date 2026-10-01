@@ -55,7 +55,7 @@ from app.turn.types import (
     Turn,
 )
 from app.planner import shadow as _planner_shadow, tracestore as _planner_trace
-from app.planner.arms import jev_agent_stream, legacy_tool_calls, start_plan_early
+from app.planner.arms import jev_agent_stream, legacy_tool_calls, start_plan_early, start_query_early
 from app.planner.gate import ModerationRejected, gated as _gate_until_verdict
 from app.planner.streaming import pipelined_translate as _pipelined_translate
 from app.planner.config import PlannerSettings, planner_override_enabled
@@ -947,6 +947,8 @@ async def run_turn(
                         include_tool_calls=False,
                     )
                     turn_sink["plan_task"] = start_plan_early(deps, _early_history, planner_settings, query)
+                    if planner_settings.query_writer:
+                        turn_sink["query_task"] = start_query_early(execution, deps, _early_history, planner_settings)
                     stages.mark("plan_started")
                 except Exception as _pe:  # planning must never break the turn; the arm plans inline instead
                     logger.debug("early plan not started: %s", _pe)
@@ -1106,9 +1108,9 @@ async def run_turn(
                             # supposed to. Recording "error" here inflated the error rate
                             # by one row per moderated query.
                             _turn_outcome = "success"
-                            _pt = turn_sink.pop("plan_task", None)
-                            if _pt is not None:
-                                _pt.cancel()
+                            for _pt in (turn_sink.pop("plan_task", None), turn_sink.pop("query_task", None)):
+                                if _pt is not None:
+                                    _pt.cancel()
                             yield TextEmission(decline_text)
                             return
                         deps.update_moderation_str(str(moderation_data))
@@ -1126,9 +1128,9 @@ async def run_turn(
                     # is still recorded so the export shows what the farmer actually
                     # saw rather than a blank row.
                     _record_trace_output(fail_closed_message, "fail-closed")
-                    _pt = turn_sink.pop("plan_task", None)
-                    if _pt is not None:
-                        _pt.cancel()
+                    for _pt in (turn_sink.pop("plan_task", None), turn_sink.pop("query_task", None)):
+                        if _pt is not None:
+                            _pt.cancel()
                     yield TextEmission(fail_closed_message)
                     return
 

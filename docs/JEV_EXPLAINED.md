@@ -127,7 +127,7 @@ In a first check on 30 September 2026, the onion price question in Junagadh (bot
 
 Jev chooses; it cannot write, calculate or reason step by step, so a few jobs are done differently or handed back.
 
-- **It cannot write search words.** Document searches use the farmer's own words with filler removed, plus a few topic words. Words like "not" and "no" are kept, so "not eating" is not searched as "eating".
+- **It cannot write search words, so a short AI call does.** When a question needs the vet documents, a small AI call (the deployment's own fast model) writes the search words from the message and the last two exchanges, at the same time as Jev decides. It keeps follow-ups on topic: "and what about for a buffalo?" after a mastitis question searches for "buffalo mastitis treatment". If that call is late or fails, the farmer's own words are searched instead. In the lab it adds about 0.35 s on search questions; other questions are not affected.
 - **It cannot react to what a lookup returned.** Today's model can look at results and search again. Jev plans everything up front; the writing model then explains whatever came back, including "not found".
 - **It works best in English.** It always receives the translated English question.
 - **Its options are fixed lists.** Crops, districts and schemes come from lists in the code. A new crop name has to be added to the list.

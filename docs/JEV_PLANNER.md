@@ -310,8 +310,14 @@ Production rollout: `PLANNER_MODE=shadow` first (agreement rate, zero farmer imp
 
 ## 6. Known limits (stated up front)
 
-* Search queries are the farmer's words compacted, not model-drafted keywords. Whether that
-  hurts or helps recall on the Beckn vet KB is an empirical question the lab answers.
+* Search queries are written by `app/planner/query_writer.py`: one short generative call on
+  the MODERATION step's model (on-prem Gemma in production), started with the Jev plan and
+  given the message plus the last two exchanges. Its query goes first; the keyword query from
+  `keywords.py` stays as the second variant and as the fallback when the writer is later than
+  `PLANNER_QUERY_WRITER_WAIT_S` after the plan, fails, or returns an invalid query. Measured in
+  the lab (writer = hosted gpt-4.1 from India): about 0.35 s added over the plan on search
+  turns, median of 9; it is cancelled on turns with no search. Recall against model-written
+  legacy queries still has to be measured (oan-evaluation).
 * Iterative tool chaining inside one turn is not planned by Jev; those turns escalate.
 * Commodity and district lists are closed sets by design (the tools already reject anything
   else). New names go in `assets/commodities.json` / `agents/tools/districts.py`.

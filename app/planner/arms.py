@@ -18,6 +18,7 @@ from app.planner.config import PlannerSettings
 from app.planner.executor import execute
 from app.planner.models import Plan, StageRecorder, ToolResult
 from app.planner.planner import plan_turn
+from app.planner import query_writer
 
 logger = get_logger(__name__)
 
@@ -48,6 +49,9 @@ async def jev_agent_stream(
     original_query: Optional[str] = None,
 ) -> AsyncIterator[str]:
     """Drop-in for ``execution.stream(agent, ...)`` on the Jev arm."""
+    query_task = sink.pop("query_task", None)
+    if query_task is None and settings.query_writer:
+        query_task = start_query_early(execution, deps, history, settings)
     stages.start("plan")
     plan_task = sink.pop("plan_task", None)
     try:
@@ -73,6 +77,8 @@ async def jev_agent_stream(
 
     if plan.escalate:
         # Accuracy floor: the legacy two-request loop answers this turn.
+        if query_task is not None:
+            query_task.cancel()
         logger.info("jev arm escalating to legacy planner: %s", plan.escalate_reason)
         stages.start("compose")
         first = True
@@ -85,6 +91,12 @@ async def jev_agent_stream(
         stages.end("compose")
         return
 
+    if query_task is not None:
+        stages.start("query_wait")
+        await query_writer.apply(plan, query_task, wait_s=settings.query_writer_wait_s,
+                                 top_k=settings.search_top_k, stages=stages)
+        stages.end("query_wait")
+        stages.meta["planned_tools"] = [{"name": c.name, "args": c.args, "confidence": round(c.confidence, 3)} for c in plan.tool_calls]
     stages.start("tools")
     results: list[ToolResult] = await execute(plan, deps, settings, stages)
     stages.end("tools")
@@ -132,6 +144,12 @@ def start_plan_early(deps: FarmerContext, history: list, settings: PlannerSettin
     pairs = history_pairs_from_messages(history, settings.history_pairs)
     # Copy: the live turn keeps mutating deps while the plan runs (as in shadow.start).
     return asyncio.create_task(plan_turn(deps.model_copy(), pairs, settings, original_query=original_query))
+
+
+def start_query_early(execution: Any, deps: FarmerContext, history: list, settings: PlannerSettings):
+    """Kick off the search-query writer alongside the plan (cancelled if no search)."""
+    pairs = history_pairs_from_messages(history, 2)
+    return query_writer.start(execution, deps.query or "", pairs)
 
 
 def legacy_tool_calls(new_messages: list) -> list[dict[str, Any]]:

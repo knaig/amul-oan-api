@@ -49,6 +49,10 @@ class PlannerSettings:
     # Retrieval shaping.
     search_top_k: int = 8
     search_fanout: int = 2  # parallel query variants (1 = passthrough only)
+    # Search-query writer: a short generative call (the MODERATION step's model)
+    # started alongside the Jev plan; its query goes first, a keyword variant second.
+    query_writer: bool = True
+    query_writer_wait_s: float = 1.0  # max extra wait after the plan is ready, then keywords only
     milk_default_range_days: int = 7
     # Safety.
     dry_run_side_effects: bool = False
@@ -91,6 +95,8 @@ class PlannerSettings:
             low_confidence_policy=policy,  # type: ignore[arg-type]
             search_top_k=_int("PLANNER_SEARCH_TOP_K", 8),
             search_fanout=_int("PLANNER_SEARCH_FANOUT", 2),
+            query_writer=_bool("PLANNER_QUERY_WRITER", True),
+            query_writer_wait_s=_float("PLANNER_QUERY_WRITER_WAIT_S", 1.0),
             milk_default_range_days=_int("PLANNER_MILK_DEFAULT_RANGE_DAYS", 7),
             dry_run_side_effects=_bool("PLANNER_DRY_RUN_SIDE_EFFECTS", False),
             disabled_tools=disabled,
