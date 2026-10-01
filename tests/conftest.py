@@ -16,6 +16,8 @@ os.environ.setdefault("PLANNER_PIPELINED_TRANSLATION", "false")
 os.environ.setdefault("PIPELINE_CONFIG_PATH", "")
 os.environ.setdefault("HEALTH_BREAKER_ENABLED", "true")
 os.environ.setdefault("HEALTH_POLLER_ENABLED", "true")
+# The lab .env may switch a language off (HINDI_CHAT_ENABLED=false); the suite pins it on.
+os.environ.setdefault("HINDI_CHAT_ENABLED", "true")
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
